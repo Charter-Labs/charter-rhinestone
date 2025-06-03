@@ -1,0 +1,35 @@
+{
+  "private": true,
+  "scripts": {
+    "prepare": "bun run build",
+    "build": "bun run clean && tsc",
+    "clean": "rimraf src/dist",
+    "test": "vitest",
+    "check": "biome check",
+    "typecheck": "tsc --noEmit",
+    "changeset": "changeset",
+    "changeset:release": "bun run build && changeset publish",
+    "changeset:version": "changeset version",
+    "size": "size-limit"
+  },
+  "workspaces": [
+    "./*"
+  ],
+  "dependencies": {
+    "viem": "^2.28.0"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.0.0-beta.1",
+    "@changesets/cli": "^2.28.1",
+    "@size-limit/esbuild-why": "^11.2.0",
+    "@size-limit/preset-small-lib": "^11.2.0",
+    "@types/bun": "^1.2.8",
+    "rimraf": "^6.0.1",
+    "size-limit": "^11.2.0",
+    "ts-node": "^10.9.2",
+    "tsc-alias": "^1.8.13",
+    "tsc-esm-fix": "^3.1.2",
+    "typescript": "^5.8.2",
+    "vitest": "^3.1.2"
+  }
+}

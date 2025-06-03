@@ -1,0 +1,54 @@
+{
+  "name": "@charterlabs/rhinestone-sdk",
+  "version": "0.0.1",
+  "description": "Rhinestone SDK for Charter Labs",
+  "author": {
+    "name": "Charter Labs",
+    "url": "https://charterlabs.io"
+  },
+  "keywords": [
+    "ethereum",
+    "rhinestone",
+    "sdk"
+  ],
+  "license": "MIT",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.js"
+    },
+    "./orchestrator": {
+      "types": "./dist/orchestrator/index.d.ts",
+      "import": "./dist/orchestrator/index.js",
+      "require": "./dist/orchestrator/index.js"
+    },
+    "./dist/orchestrator": {
+      "types": "./dist/orchestrator/index.d.ts",
+      "require": "./dist/orchestrator/index.js",
+      "import": "./dist/orchestrator/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "homepage": "https://docs.rhinestone.dev/",
+  "bugs": {
+    "url": "https://github.com/rhinestonewtf/sdk/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/rhinestonewtf/sdk.git"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "dependencies": {
+    "axios": "^1.7.0"
+  },
+  "peerDependencies": {
+    "viem": "^2.28.0"
+  }
+}
