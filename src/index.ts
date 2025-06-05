@@ -1,5 +1,5 @@
 import type { Address, Chain } from 'viem'
-import { getAddress as getAddressInternal, getDeployArgs, deploySource as deploySourceInternal } from './accounts'
+import { getAddress as getAddressInternal, deploySource as deploySourceInternal } from './accounts'
 import type { TransactionResult } from './execution'
 import {
   getMaxSpendableAmount as getMaxSpendableAmountInternal,

@@ -303,6 +303,9 @@ function getTokenSymbol(tokenAddress: Address, chainId: number): string {
 }
 
 function getTokenAddress(tokenSymbol: string, chainId: number): Address {
+  if (chainId === 137 && tokenSymbol === 'ETH') {
+    throw new Error(`Chain ${chainId} does not allow for ETH to be used`)
+  }
   if (tokenSymbol === 'ETH') {
     return zeroAddress
   }
@@ -396,6 +399,12 @@ function getTokenDecimals(symbol: string): number {
   }
 }
 
+function getDefaultAccountAccessList() {
+  return {
+    chainIds: [mainnet.id, base.id, arbitrum.id, optimism.id],
+  }
+}
+
 export {
   getTokenSymbol,
   getTokenAddress,
@@ -410,4 +419,5 @@ export {
   getSupportedTokens,
   isTestnet,
   isTokenAddressSupported,
+  getDefaultAccountAccessList,
 }
