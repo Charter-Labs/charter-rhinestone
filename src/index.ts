@@ -2,7 +2,8 @@ import type { Address, Chain } from 'viem'
 import { UserOperationReceipt } from 'viem/account-abstraction'
 import {
   deploy as deployInternal,
-  getAddress as getAddressInternal, deploySource as deploySourceInternal,
+  getAddress as getAddressInternal,
+  deploySource as deploySourceInternal
 } from './accounts'
 import {
   addOwner,
@@ -67,6 +68,7 @@ interface RhinestoneAccount {
     tokenAddress: Address,
     gasUnits: bigint,
   ) => Promise<bigint>
+  deploySource: (chain: Chain) => Promise<void>
 }
 
 /**
