@@ -1,4 +1,5 @@
 import {
+  Account,
   type Address,
   bytesToHex,
   concat,
@@ -149,6 +150,33 @@ function getWebAuthnValidator(webAuthnCredential: WebauthnCredential): Module {
   }
 }
 
+function getSocialRecoveryValidator(
+  guardians: Account[],
+  threshold = 1,
+): Module {
+  const guardianAddresses = guardians.map((guardian) => guardian.address)
+  guardianAddresses.sort()
+  return {
+    type: MODULE_TYPE_ID_VALIDATOR,
+    address: SOCIAL_RECOVERY_VALIDATOR_ADDRESS,
+    initData: encodeAbiParameters(
+      [
+        {
+          type: 'uint256',
+          name: 'threshold',
+        },
+        {
+          type: 'address[]',
+          name: 'guardians',
+        },
+      ],
+      [BigInt(threshold), guardianAddresses],
+    ),
+    deInitData: '0x',
+    additionalContext: '0x',
+  }
+}
+
 function parsePublicKey(publicKey: Hex | Uint8Array): PublicKey {
   const bytes =
     typeof publicKey === 'string' ? hexToBytes(publicKey) : publicKey
@@ -162,4 +190,10 @@ function parsePublicKey(publicKey: Hex | Uint8Array): PublicKey {
   }
 }
 
-export { getOwnerValidator, getValidator, getMockSignature }
+export {
+  OWNABLE_VALIDATOR_ADDRESS,
+  getOwnerValidator,
+  getSocialRecoveryValidator,
+  getValidator,
+  getMockSignature,
+}

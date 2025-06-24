@@ -1,5 +1,16 @@
 import type { Address, Chain } from 'viem'
-import { getAddress as getAddressInternal, deploySource as deploySourceInternal } from './accounts'
+import { UserOperationReceipt } from 'viem/account-abstraction'
+import {
+  deploy as deployInternal,
+  getAddress as getAddressInternal, deploySource as deploySourceInternal,
+} from './accounts'
+import {
+  addOwner,
+  recover,
+  removeOwner,
+  setThreshold,
+  setUpRecovery,
+} from './actions'
 import type { TransactionResult } from './execution'
 import {
   getMaxSpendableAmount as getMaxSpendableAmountInternal,
@@ -7,12 +18,22 @@ import {
   sendTransaction as sendTransactionInternal,
   waitForExecution as waitForExecutionInternal,
 } from './execution'
+import {
+  BundleData,
+  PreparedTransactionData,
+  prepareTransaction as prepareTransactionInternal,
+  SignedTransactionData,
+  signTransaction as signTransactionInternal,
+  submitTransaction as submitTransactionInternal,
+} from './execution/utils'
 import type {
+  BundleResult,
   BundleStatus,
   MetaIntent,
   MultiChainCompact,
   PostOrderBundleResult,
   SignedMultiChainCompact,
+  UserTokenBalance,
 } from './orchestrator'
 import type {
   Call,
@@ -22,13 +43,57 @@ import type {
   Transaction,
 } from './types'
 
+interface RhinestoneAccount {
+  config: RhinestoneAccountConfig
+  deploy: (chain: Chain, session?: Session) => Promise<void>
+  prepareTransaction: (
+    transaction: Transaction,
+  ) => Promise<PreparedTransactionData>
+  signTransaction: (
+    preparedTransaction: PreparedTransactionData,
+  ) => Promise<SignedTransactionData>
+  submitTransaction: (
+    signedTransaction: SignedTransactionData,
+  ) => Promise<TransactionResult>
+  sendTransaction: (transaction: Transaction) => Promise<TransactionResult>
+  waitForExecution: (
+    result: TransactionResult,
+    acceptsPreconfirmations?: boolean,
+  ) => Promise<BundleResult | UserOperationReceipt>
+  getAddress: () => Address
+  getPortfolio: (onTestnets?: boolean) => Promise<UserTokenBalance[]>
+  getMaxSpendableAmount: (
+    chain: Chain,
+    tokenAddress: Address,
+    gasUnits: bigint,
+  ) => Promise<bigint>
+}
+
 /**
  * Initialize a Rhinestone account
  * Note: accounts are deployed onchain only when the first transaction is sent.
  * @param config Account config (e.g. implementation vendor, owner signers, smart sessions)
  * @returns account
  */
-async function createRhinestoneAccount(config: RhinestoneAccountConfig) {
+async function createRhinestoneAccount(
+  config: RhinestoneAccountConfig,
+): Promise<RhinestoneAccount> {
+  function deploy(chain: Chain, session?: Session) {
+    return deployInternal(config, chain, session)
+  }
+
+  function prepareTransaction(transaction: Transaction) {
+    return prepareTransactionInternal(config, transaction)
+  }
+
+  function signTransaction(preparedTransaction: PreparedTransactionData) {
+    return signTransactionInternal(config, preparedTransaction)
+  }
+
+  function submitTransaction(signedTransaction: SignedTransactionData) {
+    return submitTransactionInternal(config, signedTransaction)
+  }
+
   /**
    * Sign and send a transaction
    * @param transaction Transaction to send
@@ -89,6 +154,10 @@ async function createRhinestoneAccount(config: RhinestoneAccountConfig) {
 
   return {
     config,
+    deploy,
+    prepareTransaction,
+    signTransaction,
+    submitTransaction,
     sendTransaction,
     waitForExecution,
     getAddress,
@@ -98,8 +167,16 @@ async function createRhinestoneAccount(config: RhinestoneAccountConfig) {
   }
 }
 
-export { createRhinestoneAccount }
+export {
+  createRhinestoneAccount,
+  addOwner,
+  recover,
+  removeOwner,
+  setThreshold,
+  setUpRecovery,
+}
 export type {
+  RhinestoneAccount,
   BundleStatus,
   Session,
   Call,
@@ -108,4 +185,8 @@ export type {
   MultiChainCompact,
   PostOrderBundleResult,
   SignedMultiChainCompact,
+  BundleData,
+  PreparedTransactionData,
+  SignedTransactionData,
+  TransactionResult,
 }
