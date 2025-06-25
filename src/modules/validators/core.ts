@@ -6,8 +6,6 @@ import {
   encodeAbiParameters,
   type Hex,
   hexToBytes,
-  keccak256,
-  toHex,
 } from 'viem'
 
 import type { OwnerSet, RhinestoneAccountConfig } from '../../types'
@@ -121,30 +119,22 @@ function getWebAuthnValidator(webAuthnCredential: WebauthnCredential): Module {
     address: WEBAUTHN_VALIDATOR_ADDRESS,
     initData: encodeAbiParameters(
       [
+        { name: 'threshold', type: 'uint256' },
         {
+          name: 'credentials',
+          type: 'tuple[]',
           components: [
-            {
-              name: 'pubKeyX',
-              type: 'uint256',
-            },
-            {
-              name: 'pubKeyY',
-              type: 'uint256',
-            },
+            { name: 'pubKeyX', type: 'uint256' },
+            { name: 'pubKeyY', type: 'uint256' },
+            { name: 'requireUV', type: 'bool' },
           ],
-          type: 'tuple',
-        },
-        {
-          type: 'bytes32',
-          name: 'authenticatorIdHash',
         },
       ],
       [
-        {
-          pubKeyX,
-          pubKeyY,
-        },
-        keccak256(toHex(webAuthnCredential.authenticatorId)),
+        1n,
+        [
+          { pubKeyX, pubKeyY, requireUV: false },
+        ],
       ],
     ),
     deInitData: '0x',
