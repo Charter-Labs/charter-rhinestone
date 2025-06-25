@@ -1,5 +1,19 @@
 # @rhinestone/sdk
 
+## 0.12.1
+
+### Patch Changes
+
+- 5b6d52d: remove default access list
+
+## 0.12.0
+
+### Minor Changes
+
+- 6f73fea: - Validator installation
+  - Validator uninstallation
+  - Custom signers
+
 ## 0.11.3
 
 ### Patch Changes

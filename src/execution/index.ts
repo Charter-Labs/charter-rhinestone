@@ -101,7 +101,8 @@ async function sendTransactionInternal(
         ]
       : initialTokenRequests
 
-  if (signers) {
+  const asUserOp = signers?.type === 'guardians' || signers?.type === 'session'
+  if (asUserOp) {
     if (!sourceChain) {
       throw new Error(
         `Specifying source chain is required when using smart sessions or guardians`,
@@ -131,6 +132,7 @@ async function sendTransactionInternal(
       gasLimit,
       tokenRequests,
       accountAddress,
+      signers,
     )
   }
 }
@@ -227,6 +229,7 @@ async function sendTransactionAsIntent(
   gasLimit: bigint | undefined,
   tokenRequests: TokenRequest[],
   accountAddress: Address,
+  signers?: SignerSet,
 ) {
   const { orderPath, hash: orderBundleHash } = await prepareTransactionAsIntent(
     config,
@@ -242,6 +245,7 @@ async function sendTransactionAsIntent(
     sourceChain,
     targetChain,
     orderBundleHash,
+    signers,
   )
   return await submitIntentInternal(
     config,
@@ -321,7 +325,7 @@ async function getPortfolio(
   const address = getAddress(config)
   const chainId = onTestnets ? sepolia.id : mainnet.id
   const orchestrator = getOrchestratorByChain(chainId, config.rhinestoneApiKey)
-  return orchestrator.getPortfolio(address, getDefaultAccountAccessList())
+  return orchestrator.getPortfolio(address)
 }
 
 export {
