@@ -42,13 +42,15 @@ const SMART_SESSION_COMPATIBILITY_FALLBACK_ADDRESS: Address =
 interface WebAuthnData {
   authenticatorData: Hex
   clientDataJSON: string
+  challengeIndex: number | bigint
   typeIndex: number | bigint
 }
 
 interface WebauthnValidatorSignature {
+  credentialIds: Hex[]
+  usePrecompiled?: boolean
   webauthn: WebAuthnData
   signature: WebauthnSignature | Hex | Uint8Array
-  usePrecompiled?: boolean
 }
 
 interface WebauthnSignature {
@@ -159,12 +161,10 @@ function getSetup(config: RhinestoneAccountConfig): ModeleSetup {
   }
 }
 
-function getWebauthnValidatorSignature({
-  webauthn,
-  signature,
-  usePrecompiled = false,
-}: WebauthnValidatorSignature) {
-  const { authenticatorData, clientDataJSON, typeIndex } = webauthn
+function getWebauthnValidatorSignature(params: WebauthnValidatorSignature): Hex {
+  const { credentialIds, usePrecompiled = false, webauthn, signature } = params
+  const { authenticatorData, clientDataJSON, challengeIndex, typeIndex } = webauthn
+
   let r: bigint
   let s: bigint
   if (typeof signature === 'string' || signature instanceof Uint8Array) {
@@ -175,37 +175,35 @@ function getWebauthnValidatorSignature({
     r = signature.r
     s = signature.s
   }
+
+  const auth = [{
+    authenticatorData,
+    clientDataJSON,
+    challengeIndex: BigInt(challengeIndex),
+    typeIndex: BigInt(typeIndex),
+    r,
+    s
+  }]
+
   return encodeAbiParameters(
     [
-      { type: 'bytes', name: 'authenticatorData' },
+      { type: 'bytes32[]', name: 'credentialIds'    },
+      { type: 'bool',     name: 'usePrecompiled'   },
       {
-        type: 'string',
-        name: 'clientDataJSON',
-      },
-      {
-        type: 'uint256',
-        name: 'responseTypeLocation',
-      },
-      {
-        type: 'uint256',
-        name: 'r',
-      },
-      {
-        type: 'uint256',
-        name: 's',
-      },
-      {
-        type: 'bool',
-        name: 'usePrecompiled',
+        type: 'tuple[]', name: 'auths', components: [
+          { type: 'bytes',   name: 'authenticatorData' },
+          { type: 'string',  name: 'clientDataJSON'    },
+          { type: 'uint256', name: 'challengeIndex'   },
+          { type: 'uint256', name: 'typeIndex'        },
+          { type: 'uint256', name: 'r'                },
+          { type: 'uint256', name: 's'                },
+        ],
       },
     ],
     [
-      authenticatorData,
-      clientDataJSON,
-      typeof typeIndex === 'bigint' ? typeIndex : BigInt(typeIndex),
-      r,
-      s,
+      credentialIds,
       usePrecompiled,
+      auth,
     ],
   )
 }

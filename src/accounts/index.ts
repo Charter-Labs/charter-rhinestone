@@ -28,6 +28,7 @@ import type {
   AccountProviderConfig,
   Call,
   OwnerSet,
+  WebauthnValidatorConfig,
   RhinestoneAccountConfig,
   Session,
 } from '../types'
@@ -538,7 +539,7 @@ async function sign(validators: OwnerSet, chain: Chain, hash: Hex) {
       return concat(signatures)
     }
     case 'passkey': {
-      return await signPasskey(validators.account, chain, hash)
+      return await signPasskey(validators, chain, hash)
     }
   }
 }
@@ -550,15 +551,21 @@ async function signEcdsa(account: Account, hash: Hex) {
   return await account.signMessage({ message: { raw: hash } })
 }
 
-async function signPasskey(account: WebAuthnAccount, chain: Chain, hash: Hex) {
-  const { webauthn, signature } = await account.sign({ hash })
+async function signPasskey(
+  validators: WebauthnValidatorConfig,
+  chain: Chain,
+  hash: Hex
+) {
+  const { account, credentialIds } = validators
+  const { webauthn: rawWebauthn, signature } = await account.sign({ hash })
+  const { authenticatorData, clientDataJSON, challengeIndex, typeIndex } = rawWebauthn as any
   const usePrecompiled = isRip7212SupportedNetwork(chain)
-  const encodedSignature = getWebauthnValidatorSignature({
-    webauthn,
-    signature,
+  return getWebauthnValidatorSignature({
+    credentialIds,
     usePrecompiled,
+    webauthn: { authenticatorData, clientDataJSON, challengeIndex, typeIndex },
+    signature,
   })
-  return encodedSignature
 }
 
 async function get7702SmartAccount(

@@ -56,6 +56,7 @@ import {
 import {
   Call,
   OwnerSet,
+  WebauthnValidatorConfig,
   RhinestoneAccountConfig,
   SignerSet,
   TokenRequest,
@@ -720,9 +721,15 @@ function getOwners(
     }
     // Passkeys (WebAuthn)
     if (withOwner.kind === 'passkey') {
+      // Pull credentialIds from config.owners, which should be a WebauthnValidatorConfig
+      const credentialIds =
+        config.owners.type === 'passkey'
+          ? (config.owners as WebauthnValidatorConfig).credentialIds
+          : []
       return {
         type: 'passkey',
         account: withOwner.account,
+        credentialIds: credentialIds,
       }
     }
   }

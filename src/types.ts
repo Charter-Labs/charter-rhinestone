@@ -14,6 +14,7 @@ interface OwnableValidatorConfig {
 interface WebauthnValidatorConfig {
   type: 'passkey'
   account: WebAuthnAccount
+  credentialIds: Hex[]
 }
 
 interface BundlerConfig {
