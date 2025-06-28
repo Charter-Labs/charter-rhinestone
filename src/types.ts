@@ -1,8 +1,11 @@
 import type { Account, Address, Chain, Hex } from 'viem'
 import type { WebAuthnAccount } from 'viem/account-abstraction'
+import { EnableSessionData } from './modules/validators/smart-sessions'
+
+type AccountType = 'safe' | 'nexus' | 'kernel'
 
 interface AccountProviderConfig {
-  type: 'safe' | 'nexus' | 'kernel'
+  type: AccountType
 }
 
 interface OwnableValidatorConfig {
@@ -18,6 +21,11 @@ interface WebauthnValidatorConfig {
 }
 
 interface BundlerConfig {
+  type: 'pimlico'
+  apiKey: string
+}
+
+interface PaymasterConfig {
   type: 'pimlico'
   apiKey: string
 }
@@ -93,6 +101,7 @@ interface Session {
   policies?: [Policy, ...Policy[]]
   actions?: [Action, ...Action[]]
   salt?: Hex
+  chain?: Chain
 }
 
 interface Recovery {
@@ -113,6 +122,7 @@ interface RhinestoneAccountConfig {
     apiKey: string
   }
   bundler?: BundlerConfig
+  paymaster?: PaymasterConfig
 }
 
 interface Call {
@@ -146,6 +156,7 @@ type OwnerSignerSet =
 interface SessionSignerSet {
   type: 'session'
   session: Session
+  enableData?: EnableSessionData
 }
 
 interface GuardiansSignerSet {
@@ -174,9 +185,11 @@ interface CrossChainTransaction extends BaseTransaction {
 type Transaction = SameChainTransaction | CrossChainTransaction
 
 export type {
+  AccountType,
   RhinestoneAccountConfig,
   AccountProviderConfig,
   BundlerConfig,
+  PaymasterConfig,
   Transaction,
   Call,
   Execution,

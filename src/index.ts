@@ -1,4 +1,4 @@
-import type { Address, Chain } from 'viem'
+import type { Address, Chain, Hex } from 'viem'
 import { UserOperationReceipt } from 'viem/account-abstraction'
 import {
   deploy as deployInternal,
@@ -12,9 +12,11 @@ import {
   disablePasskeys,
   enableEcdsa,
   enablePasskeys,
+  encodeSmartSessionSignature,
   recover,
   removeOwner,
   setUpRecovery,
+  trustAttester,
 } from './actions'
 import type { TransactionResult } from './execution'
 import {
@@ -24,6 +26,10 @@ import {
   waitForExecution as waitForExecutionInternal,
 } from './execution'
 import {
+  getSessionDetails as getSessionDetailsInternal,
+  SessionDetails,
+} from './execution/smart-session'
+import {
   BundleData,
   PreparedTransactionData,
   prepareTransaction as prepareTransactionInternal,
@@ -31,6 +37,11 @@ import {
   signTransaction as signTransactionInternal,
   submitTransaction as submitTransactionInternal,
 } from './execution/utils'
+import {
+  areAttestersTrusted as areAttestersTrustedInternal,
+  getOwners as getOwnersInternal,
+  getValidators as getValidatorsInternal,
+} from './modules'
 import type {
   BundleResult,
   BundleStatus,
@@ -73,6 +84,17 @@ interface RhinestoneAccount {
     gasUnits: bigint,
   ) => Promise<bigint>
   deploySource: (chain: Chain) => Promise<void>
+  getSessionDetails: (
+    sessions: Session[],
+    sessionIndex: number,
+    signature?: Hex,
+  ) => Promise<SessionDetails>
+  areAttestersTrusted: (chain: Chain) => Promise<boolean>
+  getOwners: (chain: Chain) => Promise<{
+    accounts: Address[]
+    threshold: number
+  } | null>
+  getValidators: (chain: Chain) => Promise<Address[]>
 }
 
 /**
@@ -158,6 +180,30 @@ async function createRhinestoneAccount(
     return deploySourceInternal(chain, config)
   }
 
+  function getSessionDetails(
+    sessions: Session[],
+    sessionIndex: number,
+    signature?: Hex,
+  ) {
+    return getSessionDetailsInternal(config, sessions, sessionIndex, signature)
+  }
+
+  function areAttestersTrusted(chain: Chain) {
+    const account = getAddress()
+    return areAttestersTrustedInternal(account, chain)
+  }
+
+  function getOwners(chain: Chain) {
+    const account = getAddress()
+    return getOwnersInternal(account, chain)
+  }
+
+  function getValidators(chain: Chain) {
+    const accountType = config.account?.type || 'nexus'
+    const account = getAddress()
+    return getValidatorsInternal(accountType, account, chain)
+  }
+
   return {
     config,
     deploy,
@@ -170,6 +216,10 @@ async function createRhinestoneAccount(
     getPortfolio,
     getMaxSpendableAmount,
     deploySource,
+    getSessionDetails,
+    areAttestersTrusted,
+    getOwners,
+    getValidators,
   }
 }
 
@@ -184,6 +234,8 @@ export {
   recover,
   removeOwner,
   setUpRecovery,
+  encodeSmartSessionSignature,
+  trustAttester,
 }
 export type {
   RhinestoneAccount,

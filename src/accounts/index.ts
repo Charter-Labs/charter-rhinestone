@@ -24,6 +24,7 @@ import {
   getSmartSessionValidator,
 } from '../modules/validators'
 import { getSocialRecoveryValidator } from '../modules/validators/core'
+import { EnableSessionData } from '../modules/validators/smart-sessions'
 import type {
   AccountProviderConfig,
   Call,
@@ -68,7 +69,7 @@ import {
 import { getBundlerClient, ValidatorConfig } from './utils'
 
 function getDeployArgs(config: RhinestoneAccountConfig) {
-  const account = getAccount(config)
+  const account = getAccountProvider(config)
   switch (account.type) {
     case 'safe': {
       return getSafeDeployArgs(config)
@@ -89,7 +90,7 @@ function getModuleInstallationCalls(
   const address = getAddress(config)
 
   function getInstallData() {
-    const account = getAccount(config)
+    const account = getAccountProvider(config)
     switch (account.type) {
       case 'safe': {
         return [getSafeInstallData(module)]
@@ -151,7 +152,7 @@ function getAddress(config: RhinestoneAccountConfig) {
     }
     return config.eoa.address
   }
-  const account = getAccount(config)
+  const account = getAccountProvider(config)
   switch (account.type) {
     case 'safe': {
       return getSafeAddress(config)
@@ -175,7 +176,7 @@ async function getPackedSignature(
   transformSignature: (signature: Hex) => Hex = (signature) => signature,
 ) {
   const signFn = (hash: Hex) => sign(owners, chain, hash)
-  const account = getAccount(config)
+  const account = getAccountProvider(config)
   const address = getAddress(config)
   switch (account.type) {
     case 'safe': {
@@ -278,7 +279,7 @@ async function deploy7702Self(chain: Chain, config: RhinestoneAccountConfig) {
     throw new Error('EIP-7702 accounts must have an EOA account')
   }
 
-  const account = getAccount(config)
+  const account = getAccountProvider(config)
   const { implementation, initializationCallData } = getDeployArgs(config)
   if (!initializationCallData) {
     throw new Error(
@@ -404,7 +405,7 @@ async function getSmartAccount(
   client: PublicClient,
   chain: Chain,
 ) {
-  const account = getAccount(config)
+  const account = getAccountProvider(config)
   const address = getAddress(config)
   const ownerValidator = getOwnerValidator(config)
   const signFn = (hash: Hex) => sign(config.owners, chain, hash)
@@ -444,6 +445,7 @@ async function getSmartSessionSmartAccount(
   client: PublicClient,
   chain: Chain,
   session: Session,
+  enableData: EnableSessionData | null,
 ) {
   const address = getAddress(config)
   const smartSessionValidator = getSmartSessionValidator(config)
@@ -452,7 +454,7 @@ async function getSmartSessionSmartAccount(
   }
   const signFn = (hash: Hex) => sign(session.owners, chain, hash)
 
-  const account = getAccount(config)
+  const account = getAccountProvider(config)
   switch (account.type) {
     case 'safe': {
       return getSafeSessionSmartAccount(
@@ -460,6 +462,7 @@ async function getSmartSessionSmartAccount(
         address,
         session,
         smartSessionValidator.address,
+        enableData,
         signFn,
       )
     }
@@ -469,6 +472,7 @@ async function getSmartSessionSmartAccount(
         address,
         session,
         smartSessionValidator.address,
+        enableData,
         signFn,
       )
     }
@@ -478,6 +482,7 @@ async function getSmartSessionSmartAccount(
         address,
         session,
         smartSessionValidator.address,
+        enableData,
         signFn,
       )
     }
@@ -498,7 +503,7 @@ async function getGuardianSmartAccount(
   }
   const signFn = (hash: Hex) => sign(guardians, chain, hash)
 
-  const account = getAccount(config)
+  const account = getAccountProvider(config)
   switch (account.type) {
     case 'safe': {
       return getSafeGuardianSmartAccount(
@@ -576,7 +581,7 @@ async function get7702SmartAccount(
     throw new Error('EIP-7702 accounts must have an EOA account')
   }
 
-  const account = getAccount(config)
+  const account = getAccountProvider(config)
   switch (account.type) {
     case 'safe': {
       return get7702SafeAccount()
@@ -591,7 +596,7 @@ async function get7702SmartAccount(
 }
 
 async function get7702InitCalls(config: RhinestoneAccountConfig) {
-  const account = getAccount(config)
+  const account = getAccountProvider(config)
   switch (account.type) {
     case 'safe': {
       return get7702SafeInitCalls()
@@ -609,7 +614,9 @@ function is7702(config: RhinestoneAccountConfig): boolean {
   return config.eoa !== undefined
 }
 
-function getAccount(config: RhinestoneAccountConfig): AccountProviderConfig {
+function getAccountProvider(
+  config: RhinestoneAccountConfig,
+): AccountProviderConfig {
   if (config.account) {
     return config.account
   }
@@ -624,6 +631,7 @@ export {
   getDeployArgs,
   getBundleInitCode,
   getAddress,
+  getAccountProvider,
   isDeployed,
   deploy,
   deploySource,
