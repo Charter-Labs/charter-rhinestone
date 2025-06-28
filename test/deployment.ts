@@ -5,7 +5,7 @@ const deployerPrivateKey =
   '0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80'
 const deployerAccount = privateKeyToAccount(deployerPrivateKey)
 
-const sourceChain = base
+const sourceChain = baseSepolia
 const anvil = getAnvil(sourceChain, getForkUrl(sourceChain))
 
 setupOrchestratorMock()
@@ -14,7 +14,7 @@ setupViemMock(anvil, deployerAccount)
 import { Address, createPublicClient, http } from 'viem'
 import { generatePrivateKey } from 'viem/accounts'
 import { privateKeyToAccount } from 'viem/accounts'
-import { base } from 'viem/chains'
+import { baseSepolia } from 'viem/chains'
 import { describe, expect, it } from 'vitest'
 
 import './utils/polyfill'
