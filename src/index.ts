@@ -6,10 +6,12 @@ import type {
   SignableMessage,
   SignedAuthorizationList,
   TypedData,
+  Account,
 } from 'viem'
 import type { UserOperationReceipt } from 'viem/account-abstraction'
 import {
   AccountError,
+  deployStandaloneWithEoa as deployStandaloneWithEoaInternal,
   deploy as deployInternal,
   Eip7702AccountMustHaveEoaError,
   Eip7702NotSupportedForAccountError,
@@ -114,6 +116,11 @@ import type {
 interface RhinestoneAccount {
   config: RhinestoneAccountConfig
   deploy: (chain: Chain, session?: Session) => Promise<void>
+  deployStandaloneWithEoa: (
+    chain: Chain,
+    config: RhinestoneAccountConfig,
+    deployer: Account,
+  ) => Promise<void>
   signEip7702InitData: () => Promise<Hex>
   prepareTransaction: (
     transaction: Transaction,
@@ -181,6 +188,14 @@ async function createRhinestoneAccount(
    */
   function deploy(chain: Chain, session?: Session) {
     return deployInternal(config, chain, session)
+  }
+
+  function deployStandaloneWithEoa(
+    chain: Chain,
+    config: RhinestoneAccountConfig,
+    deployer: Account,
+  ) {
+    return deployStandaloneWithEoaInternal(chain, config, deployer)
   }
 
   /**
@@ -363,6 +378,7 @@ async function createRhinestoneAccount(
   return {
     config,
     deploy,
+    deployStandaloneWithEoa,
     signEip7702InitData,
     prepareTransaction,
     signTransaction,
@@ -383,6 +399,7 @@ async function createRhinestoneAccount(
 
 export {
   createRhinestoneAccount,
+  deployStandaloneWithEoaInternal as deployStandaloneWithEoa,
   // Actions
   addOwner,
   addPasskeyOwner,

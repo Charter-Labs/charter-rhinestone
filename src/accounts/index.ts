@@ -1,7 +1,9 @@
 import {
   type Chain,
+  type Account,
   concat,
   createPublicClient,
+  createWalletClient,
   encodeAbiParameters,
   encodeFunctionData,
   type HashTypedDataParameters,
@@ -371,6 +373,47 @@ async function deployWithIntent(chain: Chain, config: RhinestoneAccountConfig) {
   await waitForExecution(config, result, true)
 }
 
+async function deployStandaloneWithEoa(
+  chain: Chain,
+  config: RhinestoneAccountConfig,
+  deployer: Account,
+): Promise<void> {
+  if (is7702(config)) {
+    const account = getAccountProvider(config)
+    throw new Eip7702NotSupportedForAccountError(account.type)
+  }
+
+  const publicClient = createPublicClient({
+    chain,
+    transport: createTransport(chain, config.provider),
+  })
+
+  const address = getAddress(config)
+  const code = await publicClient.getCode({ address })
+  if (code && code !== '0x') {
+    // Already deployed
+    return
+  }
+
+  const initCode = getInitCode(config)
+  if (!initCode) {
+    throw new FactoryArgsNotAvailableError()
+  }
+  const { factory, factoryData } = initCode
+
+  const walletClient = createWalletClient({
+    account: deployer,
+    chain,
+    transport: createTransport(chain, config.provider),
+  })
+
+  const hash = await walletClient.sendTransaction({
+    to: factory,
+    data: factoryData,
+  })
+  await publicClient.waitForTransactionReceipt({ hash })
+}
+
 async function toErc6492Signature(
   config: RhinestoneAccountConfig,
   signature: Hex,
@@ -599,6 +642,7 @@ export {
   getEip7702InitCall,
   isDeployed,
   deploy,
+  deployStandaloneWithEoa,
   toErc6492Signature,
   getSmartAccount,
   getSmartSessionSmartAccount,
