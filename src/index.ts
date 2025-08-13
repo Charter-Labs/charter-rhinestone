@@ -458,3 +458,21 @@ export type {
   SignedIntentOp,
   Portfolio,
 }
+
+// WebAuthn Validator contract helpers
+export {
+  generateCredentialId,
+  getCredentialIds,
+  hasCredentialById,
+  hasCredential,
+  addCredential,
+  removeCredential,
+  setThreshold,
+  getCredentialInfo,
+  getThreshold,
+  getCredentials,
+  WEBAUTHN_VALIDATOR_ABI,
+} from './modules/validators/webauthn-contract'
+
+// Orchestrator helpers
+export { getOrchestrator } from './orchestrator'
