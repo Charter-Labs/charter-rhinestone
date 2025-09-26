@@ -1118,7 +1118,7 @@ function validateTokenSymbols(
       return true
     }
     // Token symbol
-    const address = getTokenAddress(addressOrSymbol, chain.id)
+    const address = getTokenAddress(addressOrSymbol, chain.id as any)
     return isAddress(address, { strict: false })
   }
 

@@ -2,8 +2,8 @@ import { createPublicClient } from 'viem'
 import { base } from 'viem/chains'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { accountA, accountB, accountC, accountD } from '../../test/consts'
-import { RhinestoneSDK } from '..'
 import { resolveCallInputs } from '../execution/utils'
+import { RhinestoneSDK } from '../index'
 import {
   recoverEcdsaOwnership as recover,
   enable as setUpRecovery,

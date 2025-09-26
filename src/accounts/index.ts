@@ -1,7 +1,9 @@
 import {
+  type Account,
   type Chain,
   concat,
   createPublicClient,
+  createWalletClient,
   encodeAbiParameters,
   encodeFunctionData,
   type HashTypedDataParameters,
@@ -568,6 +570,46 @@ async function deployWithBundler(chain: Chain, config: RhinestoneConfig) {
   })
 }
 
+async function deployStandaloneWithEoa(
+  chain: Chain,
+  config: RhinestoneConfig,
+  deployer: Account,
+): Promise<void> {
+  const account = getAccountProvider(config)
+  if (account.type === 'eoa') {
+    throw new Error('EOA accounts do not have deploy args')
+  }
+
+  const publicClient = createPublicClient({
+    chain,
+    transport: createTransport(chain, (config as any).provider),
+  })
+
+  const address = getAddress(config)
+  const code = await publicClient.getCode({ address })
+  if (code && code !== '0x') {
+    return
+  }
+
+  const initCode = getInitCode(config)
+  if (!initCode) {
+    throw new FactoryArgsNotAvailableError()
+  }
+  const { factory, factoryData } = initCode
+
+  const walletClient = createWalletClient({
+    account: deployer,
+    chain,
+    transport: createTransport(chain, (config as any).provider),
+  })
+
+  const hash = await walletClient.sendTransaction({
+    to: factory,
+    data: factoryData,
+  })
+  await publicClient.waitForTransactionReceipt({ hash })
+}
+
 async function toErc6492Signature(
   config: RhinestoneConfig,
   signature: Hex,
@@ -825,6 +867,7 @@ export {
   getGuardianSmartAccount,
   getPackedSignature,
   getTypedDataPackedSignature,
+  deployStandaloneWithEoa,
   // Errors
   isAccountError,
   AccountError,

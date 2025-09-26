@@ -17,8 +17,8 @@ import {
   OwnersFieldRequiredError,
   setup as setupInternal,
   signEip7702InitData as signEip7702InitDataInternal,
+  deployStandaloneWithEoa as deployStandaloneWithEoaInternal,
 } from './accounts'
-import { deployStandaloneWithEoa as deployStandaloneWithEoaInternal } from './accounts'
 import { walletClientToAccount } from './accounts/walletClient'
 import { encodeSmartSessionSignature } from './actions/smart-session'
 import {
