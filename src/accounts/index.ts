@@ -1,9 +1,7 @@
 import {
   type Chain,
-  type Account,
   concat,
   createPublicClient,
-  createWalletClient,
   encodeAbiParameters,
   encodeFunctionData,
   type HashTypedDataParameters,
@@ -14,8 +12,16 @@ import {
   type TypedData,
   zeroAddress,
 } from 'viem'
-import { sendTransaction, waitForExecution } from '../execution'
+import {
+  sendTransaction,
+  sendTransactionInternal,
+  sendUserOperationInternal,
+  type TransactionResult,
+  type UserOperationResult,
+  waitForExecution,
+} from '../execution'
 import { enableSmartSession } from '../execution/smart-session'
+import { getIntentExecutor, getSetup } from '../modules'
 import type { Module } from '../modules/common'
 import {
   getOwnerValidator,
@@ -27,20 +33,25 @@ import type {
   AccountProviderConfig,
   Call,
   OwnerSet,
-  RhinestoneAccountConfig,
+  RhinestoneConfig,
   Session,
   SignerSet,
 } from '../types'
 import {
+  AccountConfigurationNotSupportedError,
   AccountError,
   Eip7702AccountMustHaveEoaError,
   Eip7702NotSupportedForAccountError,
+  EoaSigningMethodNotConfiguredError,
+  EoaSigningNotSupportedError,
   ExistingEip7702AccountsNotSupportedError,
   FactoryArgsNotAvailableError,
   isAccountError,
+  ModuleInstallationNotSupportedError,
+  OwnersFieldRequiredError,
   SigningNotSupportedForAccountError,
-  SignMessageNotSupportedByAccountError,
   SmartSessionsNotEnabledError,
+  WalletClientNoConnectedAccountError,
 } from './error'
 import {
   getAddress as getKernelAddress,
@@ -54,6 +65,7 @@ import {
 } from './kernel'
 import {
   getAddress as getNexusAddress,
+  getDefaultValidatorAddress as getNexusDefaultValidatorAddress,
   getDeployArgs as getNexusDeployArgs,
   getEip7702InitCall as getNexusEip7702InitCall,
   getGuardianSmartAccount as getNexusGuardianSmartAccount,
@@ -84,9 +96,13 @@ import {
   getSmartAccount as getStartaleSmartAccount,
   packSignature as packStartaleSignature,
 } from './startale'
-import { createTransport, type ValidatorConfig } from './utils'
+import {
+  createTransport,
+  getBundlerClient,
+  type ValidatorConfig,
+} from './utils'
 
-function getDeployArgs(config: RhinestoneAccountConfig) {
+function getDeployArgs(config: RhinestoneConfig) {
   const account = getAccountProvider(config)
   switch (account.type) {
     case 'safe': {
@@ -101,12 +117,19 @@ function getDeployArgs(config: RhinestoneAccountConfig) {
     case 'startale': {
       return getStartaleDeployArgs(config)
     }
+    case 'eoa': {
+      throw new Error('EOA accounts do not have deploy args')
+    }
   }
 }
 
-function getInitCode(config: RhinestoneAccountConfig) {
+function getInitCode(config: RhinestoneConfig) {
   if (is7702(config)) {
     return undefined
+  } else if (config.account?.type === 'eoa') {
+    return undefined
+  } else if (config.initData) {
+    return config.initData
   } else {
     const { factory, factoryData } = getDeployArgs(config)
     if (!factory || !factoryData) {
@@ -119,7 +142,7 @@ function getInitCode(config: RhinestoneAccountConfig) {
   }
 }
 
-async function signEip7702InitData(config: RhinestoneAccountConfig) {
+async function signEip7702InitData(config: RhinestoneConfig) {
   const eoa = config.eoa
   if (!eoa) {
     throw new Eip7702AccountMustHaveEoaError()
@@ -129,18 +152,21 @@ async function signEip7702InitData(config: RhinestoneAccountConfig) {
     case 'nexus': {
       return await signNexusEip7702InitData(config, eoa)
     }
+    case 'eoa': {
+      throw new Eip7702NotSupportedForAccountError(account.type)
+    }
     case 'safe':
     case 'kernel':
     case 'startale': {
-      throw new Error(`7702 is not supported for account type ${account.type}`)
+      throw new Eip7702NotSupportedForAccountError(account.type)
+    }
+    default: {
+      throw new Eip7702NotSupportedForAccountError((account as any).type)
     }
   }
 }
 
-async function getEip7702InitCall(
-  config: RhinestoneAccountConfig,
-  signature: Hex,
-) {
+async function getEip7702InitCall(config: RhinestoneConfig, signature: Hex) {
   const account = getAccountProvider(config)
   switch (account.type) {
     case 'nexus': {
@@ -149,13 +175,16 @@ async function getEip7702InitCall(
     case 'safe':
     case 'kernel':
     case 'startale': {
-      throw new Error(`7702 is not supported for account type ${account.type}`)
+      throw new Eip7702NotSupportedForAccountError(account.type)
+    }
+    default: {
+      throw new Eip7702NotSupportedForAccountError((account as any).type)
     }
   }
 }
 
 function getModuleInstallationCalls(
-  config: RhinestoneAccountConfig,
+  config: RhinestoneConfig,
   module: Module,
 ): Call[] {
   const address = getAddress(config)
@@ -175,6 +204,9 @@ function getModuleInstallationCalls(
       case 'startale': {
         return [getStartaleInstallData(module)]
       }
+      case 'eoa': {
+        throw new ModuleInstallationNotSupportedError(account.type)
+      }
     }
   }
 
@@ -187,7 +219,7 @@ function getModuleInstallationCalls(
 }
 
 function getModuleUninstallationCalls(
-  config: RhinestoneAccountConfig,
+  config: RhinestoneConfig,
   module: Module,
 ): Call[] {
   const address = getAddress(config)
@@ -220,7 +252,7 @@ function getModuleUninstallationCalls(
   return [{ to: address, data, value: 0n }]
 }
 
-function getAddress(config: RhinestoneAccountConfig) {
+function getAddress(config: RhinestoneConfig) {
   if (is7702(config)) {
     if (!config.eoa) {
       throw new Eip7702AccountMustHaveEoaError()
@@ -241,20 +273,42 @@ function getAddress(config: RhinestoneAccountConfig) {
     case 'startale': {
       return getStartaleAddress(config)
     }
+    case 'eoa': {
+      if (!config.eoa) {
+        throw new AccountError({
+          message: 'EOA account must have an EOA configured',
+        })
+      }
+      return config.eoa.address
+    }
   }
+}
+
+function checkAddress(config: RhinestoneConfig) {
+  if (!config.initData) {
+    return true
+  }
+  return (
+    config.initData.address.toLowerCase() === getAddress(config).toLowerCase()
+  )
 }
 
 // Signs and packs a signature to be EIP-1271 compatible
 async function getPackedSignature(
-  config: RhinestoneAccountConfig,
+  config: RhinestoneConfig,
   signers: SignerSet | undefined,
   chain: Chain,
   validator: ValidatorConfig,
   hash: Hex,
   transformSignature: (signature: Hex) => Hex = (signature) => signature,
-) {
-  signers = signers ?? convertOwnerSetToSignerSet(config.owners)
-  const signFn = (hash: Hex) => signMessage(signers, chain, address, hash)
+): Promise<Hex> {
+  if (config.account?.type === 'eoa') {
+    throw new EoaSigningNotSupportedError('packed signatures')
+  }
+
+  signers = signers ?? convertOwnerSetToSignerSet(config.owners!)
+  const signFn = (hash: Hex) =>
+    signMessage(signers, chain, address, hash, false)
   const account = getAccountProvider(config)
   const address = getAddress(config)
   switch (account.type) {
@@ -264,7 +318,15 @@ async function getPackedSignature(
     }
     case 'nexus': {
       const signature = await signFn(hash)
-      return packNexusSignature(signature, validator, transformSignature)
+      const defaultValidatorAddress = getNexusDefaultValidatorAddress(
+        account.version,
+      )
+      return packNexusSignature(
+        signature,
+        validator,
+        transformSignature,
+        defaultValidatorAddress,
+      )
     }
     case 'kernel': {
       const signature = await signFn(wrapKernelMessageHash(hash, address))
@@ -274,6 +336,9 @@ async function getPackedSignature(
       const signature = await signFn(hash)
       return packStartaleSignature(signature, validator, transformSignature)
     }
+    default: {
+      throw new Error(`Unsupported account type: ${(account as any).type}`)
+    }
   }
 }
 
@@ -282,15 +347,19 @@ async function getTypedDataPackedSignature<
   typedData extends TypedData | Record<string, unknown> = TypedData,
   primaryType extends keyof typedData | 'EIP712Domain' = keyof typedData,
 >(
-  config: RhinestoneAccountConfig,
+  config: RhinestoneConfig,
   signers: SignerSet | undefined,
   chain: Chain,
   validator: ValidatorConfig,
   parameters: HashTypedDataParameters<typedData, primaryType>,
   transformSignature: (signature: Hex) => Hex = (signature) => signature,
-) {
+): Promise<Hex> {
+  if (config.account?.type === 'eoa') {
+    throw new EoaSigningNotSupportedError('packed signatures')
+  }
+
   const address = getAddress(config)
-  signers = signers ?? convertOwnerSetToSignerSet(config.owners)
+  signers = signers ?? convertOwnerSetToSignerSet(config.owners!)
   const signFn = (
     parameters: HashTypedDataParameters<typedData, primaryType>,
   ) => signTypedData(signers, chain, address, parameters)
@@ -302,12 +371,20 @@ async function getTypedDataPackedSignature<
     }
     case 'nexus': {
       const signature = await signFn(parameters)
-      return packNexusSignature(signature, validator, transformSignature)
+      const defaultValidatorAddress = getNexusDefaultValidatorAddress(
+        account.version,
+      )
+      return packNexusSignature(
+        signature,
+        validator,
+        transformSignature,
+        defaultValidatorAddress,
+      )
     }
     case 'kernel': {
       const address = getAddress(config)
       const signMessageFn = (hash: Hex) =>
-        signMessage(signers, chain, address, hash)
+        signMessage(signers, chain, address, hash, false)
       const signature = await signMessageFn(
         wrapKernelMessageHash(hashTypedData(parameters), address),
       )
@@ -317,10 +394,19 @@ async function getTypedDataPackedSignature<
       const signature = await signFn(parameters)
       return packStartaleSignature(signature, validator, transformSignature)
     }
+    default: {
+      throw new Error(`Unsupported account type: ${(account as any).type}`)
+    }
   }
 }
 
-async function isDeployed(config: RhinestoneAccountConfig, chain: Chain) {
+async function isDeployed(config: RhinestoneConfig, chain: Chain) {
+  const account = getAccountProvider(config)
+
+  if (account.type === 'eoa') {
+    return true
+  }
+
   const publicClient = createPublicClient({
     chain: chain,
     transport: createTransport(chain, config.provider),
@@ -340,17 +426,101 @@ async function isDeployed(config: RhinestoneAccountConfig, chain: Chain) {
 }
 
 async function deploy(
-  config: RhinestoneAccountConfig,
+  config: RhinestoneConfig,
   chain: Chain,
   session?: Session,
-) {
-  await deployWithIntent(chain, config)
+): Promise<boolean> {
+  const account = getAccountProvider(config)
+
+  if (account.type === 'eoa') {
+    return false
+  }
+
+  const deployed = await isDeployed(config, chain)
+  if (deployed) {
+    return false
+  }
+  const asUserOp = config.initData && !config.initData.intentExecutorInstalled
+  if (asUserOp) {
+    await deployWithBundler(chain, config)
+  } else {
+    await deployWithIntent(chain, config)
+  }
   if (session) {
     await enableSmartSession(chain, config, session)
   }
+  return true
 }
 
-async function deployWithIntent(chain: Chain, config: RhinestoneAccountConfig) {
+// Installs the missing modules
+// Checks if the provided modules are already installed
+// Useful for existing (already deployed) accounts
+async function setup(config: RhinestoneConfig, chain: Chain): Promise<boolean> {
+  const account = getAccountProvider(config)
+
+  if (account.type === 'eoa') {
+    return false
+  }
+
+  const modules = getSetup(config)
+  const publicClient = createPublicClient({
+    chain,
+    transport: createTransport(chain, config.provider),
+  })
+  const address = getAddress(config)
+  const allModules = [
+    ...modules.validators,
+    ...modules.executors,
+    ...modules.fallbacks,
+    ...modules.hooks,
+  ]
+  // Check if the modules are already installed
+  const installedResults = await publicClient.multicall({
+    contracts: allModules.map((module) => ({
+      address: address,
+      abi: [
+        {
+          type: 'function',
+          name: 'isModuleInstalled',
+          inputs: [
+            { type: 'uint256', name: 'moduleTypeId' },
+            { type: 'address', name: 'module' },
+            { type: 'bytes', name: 'additionalContext' },
+          ],
+          outputs: [{ type: 'bool', name: 'isInstalled' }],
+          stateMutability: 'view',
+        },
+      ] as const,
+      functionName: 'isModuleInstalled',
+      args: [module.type, module.address, module.additionalContext],
+    })),
+  })
+  const isInstalled = installedResults.map((result) => result.result)
+  const modulesToInstall = allModules.filter((_, index) => !isInstalled[index])
+  if (modulesToInstall.length === 0) {
+    // Nothing to install
+    return false
+  }
+  const calls = []
+  for (const module of modulesToInstall) {
+    calls.push(...getModuleInstallationCalls(config, module))
+  }
+  // Select the transaction infra layer based on the intent executor status
+  const intentExecutor = getIntentExecutor(config)
+  const hasIntentExecutor = modulesToInstall.every(
+    (module) => module.address !== intentExecutor.address,
+  )
+  let result: TransactionResult | UserOperationResult
+  if (hasIntentExecutor) {
+    result = await sendTransactionInternal(config, [chain], chain, calls, {})
+  } else {
+    result = await sendUserOperationInternal(config, chain, calls)
+  }
+  await waitForExecution(config, result, true)
+  return true
+}
+
+async function deployWithIntent(chain: Chain, config: RhinestoneConfig) {
   const publicClient = createPublicClient({
     chain,
     transport: createTransport(chain, config.provider),
@@ -373,49 +543,33 @@ async function deployWithIntent(chain: Chain, config: RhinestoneAccountConfig) {
   await waitForExecution(config, result, true)
 }
 
-async function deployStandaloneWithEoa(
-  chain: Chain,
-  config: RhinestoneAccountConfig,
-  deployer: Account,
-): Promise<void> {
-  if (is7702(config)) {
-    const account = getAccountProvider(config)
-    throw new Eip7702NotSupportedForAccountError(account.type)
-  }
-
+async function deployWithBundler(chain: Chain, config: RhinestoneConfig) {
   const publicClient = createPublicClient({
     chain,
     transport: createTransport(chain, config.provider),
   })
-
-  const address = getAddress(config)
-  const code = await publicClient.getCode({ address })
-  if (code && code !== '0x') {
-    // Already deployed
-    return
-  }
-
-  const initCode = getInitCode(config)
-  if (!initCode) {
-    throw new FactoryArgsNotAvailableError()
-  }
-  const { factory, factoryData } = initCode
-
-  const walletClient = createWalletClient({
-    account: deployer,
-    chain,
-    transport: createTransport(chain, config.provider),
+  const bundlerClient = getBundlerClient(config, publicClient)
+  const smartAccount = await getSmartAccount(config, publicClient, chain)
+  const { factory, factoryData } = getDeployArgs(config)
+  const opHash = await bundlerClient.sendUserOperation({
+    account: smartAccount,
+    factory,
+    factoryData,
+    calls: [
+      {
+        to: zeroAddress,
+        value: 0n,
+        data: '0x',
+      },
+    ],
   })
-
-  const hash = await walletClient.sendTransaction({
-    to: factory,
-    data: factoryData,
+  await bundlerClient.waitForUserOperationReceipt({
+    hash: opHash,
   })
-  await publicClient.waitForTransactionReceipt({ hash })
 }
 
 async function toErc6492Signature(
-  config: RhinestoneAccountConfig,
+  config: RhinestoneConfig,
   signature: Hex,
   chain: Chain,
 ): Promise<Hex> {
@@ -445,15 +599,24 @@ async function toErc6492Signature(
 }
 
 async function getSmartAccount(
-  config: RhinestoneAccountConfig,
+  config: RhinestoneConfig,
   client: PublicClient,
   chain: Chain,
 ) {
+  // EOA accounts don't need smart account functionality
+  if (config.account?.type === 'eoa') {
+    throw new Error('getSmartAccount is not supported for EOA accounts')
+  }
+
+  if (!config.owners) {
+    throw new OwnersFieldRequiredError()
+  }
+
   const account = getAccountProvider(config)
   const address = getAddress(config)
   const ownerValidator = getOwnerValidator(config)
   const signers: SignerSet = convertOwnerSetToSignerSet(config.owners)
-  const signFn = (hash: Hex) => signMessage(signers, chain, address, hash)
+  const signFn = (hash: Hex) => signMessage(signers, chain, address, hash, true)
   switch (account.type) {
     case 'safe': {
       return getSafeSmartAccount(
@@ -465,12 +628,16 @@ async function getSmartAccount(
       )
     }
     case 'nexus': {
+      const defaultValidatorAddress = getNexusDefaultValidatorAddress(
+        account.version,
+      )
       return getNexusSmartAccount(
         client,
         address,
         config.owners,
         ownerValidator.address,
         signFn,
+        defaultValidatorAddress,
       )
     }
     case 'kernel': {
@@ -495,7 +662,7 @@ async function getSmartAccount(
 }
 
 async function getSmartSessionSmartAccount(
-  config: RhinestoneAccountConfig,
+  config: RhinestoneConfig,
   client: PublicClient,
   chain: Chain,
   session: Session,
@@ -511,7 +678,7 @@ async function getSmartSessionSmartAccount(
     session,
     enableData: enableData || undefined,
   }
-  const signFn = (hash: Hex) => signMessage(signers, chain, address, hash)
+  const signFn = (hash: Hex) => signMessage(signers, chain, address, hash, true)
 
   const account = getAccountProvider(config)
   switch (account.type) {
@@ -526,6 +693,9 @@ async function getSmartSessionSmartAccount(
       )
     }
     case 'nexus': {
+      const defaultValidatorAddress = getNexusDefaultValidatorAddress(
+        account.version,
+      )
       return getNexusSessionSmartAccount(
         client,
         address,
@@ -533,6 +703,7 @@ async function getSmartSessionSmartAccount(
         smartSessionValidator.address,
         enableData,
         signFn,
+        defaultValidatorAddress,
       )
     }
     case 'kernel': {
@@ -559,7 +730,7 @@ async function getSmartSessionSmartAccount(
 }
 
 async function getGuardianSmartAccount(
-  config: RhinestoneAccountConfig,
+  config: RhinestoneConfig,
   client: PublicClient,
   chain: Chain,
   guardians: OwnerSet,
@@ -574,7 +745,7 @@ async function getGuardianSmartAccount(
     type: 'guardians',
     guardians: accounts,
   }
-  const signFn = (hash: Hex) => signMessage(signers, chain, address, hash)
+  const signFn = (hash: Hex) => signMessage(signers, chain, address, hash, true)
 
   const account = getAccountProvider(config)
   switch (account.type) {
@@ -588,12 +759,16 @@ async function getGuardianSmartAccount(
       )
     }
     case 'nexus': {
+      const defaultValidatorAddress = getNexusDefaultValidatorAddress(
+        account.version,
+      )
       return getNexusGuardianSmartAccount(
         client,
         address,
         guardians,
         socialRecoveryValidator.address,
         signFn,
+        defaultValidatorAddress,
       )
     }
     case 'kernel': {
@@ -617,13 +792,12 @@ async function getGuardianSmartAccount(
   }
 }
 
-function is7702(config: RhinestoneAccountConfig): boolean {
-  return config.eoa !== undefined
+function is7702(config: RhinestoneConfig): boolean {
+  const account = getAccountProvider(config)
+  return account.type !== 'eoa' && config.eoa !== undefined
 }
 
-function getAccountProvider(
-  config: RhinestoneAccountConfig,
-): AccountProviderConfig {
+function getAccountProvider(config: RhinestoneConfig): AccountProviderConfig {
   if (config.account) {
     return config.account
   }
@@ -636,13 +810,15 @@ export {
   getModuleInstallationCalls,
   getModuleUninstallationCalls,
   getAddress,
+  checkAddress,
   getAccountProvider,
   getInitCode,
   signEip7702InitData,
   getEip7702InitCall,
+  is7702,
   isDeployed,
   deploy,
-  deployStandaloneWithEoa,
+  setup,
   toErc6492Signature,
   getSmartAccount,
   getSmartSessionSmartAccount,
@@ -652,11 +828,16 @@ export {
   // Errors
   isAccountError,
   AccountError,
+  AccountConfigurationNotSupportedError,
   Eip7702AccountMustHaveEoaError,
+  Eip7702NotSupportedForAccountError,
+  EoaSigningMethodNotConfiguredError,
+  EoaSigningNotSupportedError,
   ExistingEip7702AccountsNotSupportedError,
   FactoryArgsNotAvailableError,
-  SmartSessionsNotEnabledError,
+  ModuleInstallationNotSupportedError,
+  OwnersFieldRequiredError,
   SigningNotSupportedForAccountError,
-  SignMessageNotSupportedByAccountError,
-  Eip7702NotSupportedForAccountError,
+  SmartSessionsNotEnabledError,
+  WalletClientNoConnectedAccountError,
 }

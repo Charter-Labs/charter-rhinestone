@@ -1,3 +1,8 @@
+import {
+  type ChainEntry,
+  chainRegistry,
+  chains,
+} from '@rhinestone/shared-configs'
 import { type Address, type Chain, isAddress, zeroAddress } from 'viem'
 import {
   arbitrum,
@@ -10,56 +15,29 @@ import {
   polygon,
   sepolia,
   soneium,
-  zksync,
+  sonic,
 } from 'viem/chains'
 import type { TokenSymbol } from '../types'
-import registryData from './registry.json'
-import type { TokenConfig } from './types'
-
-interface TokenEntry {
-  symbol: string
-  address: Address
-  decimals: number
-  balanceSlot: number | null
-}
-
-interface ChainContracts {
-  spokepool: Address
-  hook: Address
-  originModule: Address
-  targetModule: Address
-  sameChainModule: Address
-}
-
-interface ChainEntry {
-  name: string
-  contracts: ChainContracts
-  tokens: TokenEntry[]
-}
-
-interface Registry {
-  [chainId: string]: ChainEntry
-}
-
-const registry: Registry = registryData as Registry
+import { UnsupportedChainError, UnsupportedTokenError } from './error'
+import type { SupportedChain, TokenConfig } from './types'
 
 function getSupportedChainIds(): number[] {
-  return Object.keys(registry).map((chainId) => parseInt(chainId, 10))
+  return chains.map((chain) => chain.id)
 }
 
 function getChainEntry(chainId: number): ChainEntry | undefined {
-  return registry[chainId.toString()]
+  return chainRegistry[chainId.toString()]
 }
 
 function getWethAddress(chain: Chain): Address {
   const chainEntry = getChainEntry(chain.id)
   if (!chainEntry) {
-    throw new Error(`Unsupported chain ${chain.id}`)
+    throw new UnsupportedChainError(chain.id)
   }
 
   const wethToken = chainEntry.tokens.find((token) => token.symbol === 'WETH')
   if (!wethToken) {
-    throw new Error(`WETH not found for chain ${chain.id}`)
+    throw new UnsupportedTokenError('WETH', chain.id)
   }
 
   return wethToken.address
@@ -68,7 +46,7 @@ function getWethAddress(chain: Chain): Address {
 function getTokenSymbol(tokenAddress: Address, chainId: number): string {
   const chainEntry = getChainEntry(chainId)
   if (!chainEntry) {
-    throw new Error(`Unsupported chain ${chainId}`)
+    throw new UnsupportedChainError(chainId)
   }
 
   const token = chainEntry.tokens.find(
@@ -76,17 +54,18 @@ function getTokenSymbol(tokenAddress: Address, chainId: number): string {
   )
 
   if (!token) {
-    throw new Error(
-      `Unsupported token address ${tokenAddress} for chain ${chainId}`,
-    )
+    throw new UnsupportedTokenError(tokenAddress, chainId)
   }
 
   return token.symbol
 }
 
 function getTokenAddress(tokenSymbol: TokenSymbol, chainId: number): Address {
-  if (chainId === 137 && tokenSymbol === 'ETH') {
-    throw new Error(`Chain ${chainId} does not allow for ETH to be used`)
+  if (chainId === polygon.id && tokenSymbol === 'ETH') {
+    throw new UnsupportedTokenError(tokenSymbol, chainId)
+  }
+  if (chainId === sonic.id && tokenSymbol !== 'USDC') {
+    throw new UnsupportedTokenError(tokenSymbol, chainId)
   }
   if (tokenSymbol === 'ETH') {
     return zeroAddress
@@ -94,39 +73,45 @@ function getTokenAddress(tokenSymbol: TokenSymbol, chainId: number): Address {
 
   const chainEntry = getChainEntry(chainId)
   if (!chainEntry) {
-    throw new Error(`Unsupported chain ${chainId}`)
+    throw new UnsupportedChainError(chainId)
   }
 
   const token = chainEntry.tokens.find((t) => t.symbol === tokenSymbol)
   if (!token) {
-    throw new Error(`Unsupported token symbol ${tokenSymbol}`)
+    throw new UnsupportedTokenError(tokenSymbol, chainId)
   }
 
   return token.address
 }
 
-function getChainById(chainId: number): Chain | undefined {
-  const supportedChains: Chain[] = [
-    mainnet,
-    sepolia,
-    base,
-    baseSepolia,
-    arbitrum,
-    arbitrumSepolia,
-    optimism,
-    optimismSepolia,
-    polygon,
-    zksync,
-    soneium,
-  ]
-  return supportedChains.find((chain) => chain.id === chainId)
+function isChainIdSupported(chainId: number): chainId is SupportedChain {
+  const chainIds = chains.map((chain) => chain.id) as number[]
+  return chainIds.includes(chainId)
+}
+
+function getChainById(chainId: number): Chain {
+  const chains: Record<SupportedChain, Chain> = {
+    [mainnet.id]: mainnet,
+    [sepolia.id]: sepolia,
+    [base.id]: base,
+    [baseSepolia.id]: baseSepolia,
+    [arbitrum.id]: arbitrum,
+    [arbitrumSepolia.id]: arbitrumSepolia,
+    [optimism.id]: optimism,
+    [optimismSepolia.id]: optimismSepolia,
+    [polygon.id]: polygon,
+    [soneium.id]: soneium,
+    [sonic.id]: sonic,
+  }
+
+  if (!isChainIdSupported(chainId)) {
+    throw new UnsupportedChainError(chainId)
+  }
+  return chains[chainId]
 }
 
 function isTestnet(chainId: number): boolean {
   const chain = getChainById(chainId)
-  if (!chain) {
-    throw new Error(`Chain not supported: ${chainId}`)
-  }
   return chain.testnet ?? false
 }
 
@@ -144,7 +129,7 @@ function isTokenAddressSupported(address: Address, chainId: number): boolean {
 function getSupportedTokens(chainId: number): TokenConfig[] {
   const chainEntry = getChainEntry(chainId)
   if (!chainEntry) {
-    throw new Error(`Chain not supported: ${chainId}`)
+    throw new UnsupportedChainError(chainId)
   }
 
   return chainEntry.tokens
@@ -187,6 +172,3 @@ export {
   getDefaultAccountAccessList,
   resolveTokenAddress,
 }
-
-// Export types for external use
-export type { TokenEntry, ChainContracts, ChainEntry, Registry }

@@ -10,112 +10,104 @@ import type {
 } from 'viem'
 import type { UserOperationReceipt } from 'viem/account-abstraction'
 import {
-  AccountError,
-  deployStandaloneWithEoa as deployStandaloneWithEoaInternal,
+  checkAddress,
   deploy as deployInternal,
-  Eip7702AccountMustHaveEoaError,
-  Eip7702NotSupportedForAccountError,
-  ExistingEip7702AccountsNotSupportedError,
-  FactoryArgsNotAvailableError,
   getAddress as getAddressInternal,
-  isAccountError,
-  SigningNotSupportedForAccountError,
-  SignMessageNotSupportedByAccountError,
-  SmartSessionsNotEnabledError,
+  isDeployed as isDeployedInternal,
+  OwnersFieldRequiredError,
+  setup as setupInternal,
   signEip7702InitData as signEip7702InitDataInternal,
 } from './accounts'
+import { deployStandaloneWithEoa as deployStandaloneWithEoaInternal } from './accounts'
+import { walletClientToAccount } from './accounts/walletClient'
+import { encodeSmartSessionSignature } from './actions/smart-session'
 import {
-  addOwner,
-  addPasskeyOwner,
-  changeMultiFactorThreshold,
-  changePasskeyThreshold,
-  changeThreshold,
-  disableEcdsa,
-  disableMultiFactor,
-  disablePasskeys,
-  enableEcdsa,
-  enableMultiFactor,
-  enablePasskeys,
-  encodeSmartSessionSignature,
-  recover,
-  recoverEcdsaOwnership,
-  recoverPasskeyOwnership,
-  removeOwner,
-  removePasskeyOwner,
-  removeSubValidator,
-  setSubValidator,
-  setUpRecovery,
-} from './actions'
-import type { TransactionResult } from './execution'
-import {
-  ExecutionError,
   getMaxSpendableAmount as getMaxSpendableAmountInternal,
   getPortfolio as getPortfolioInternal,
-  IntentFailedError,
-  isExecutionError,
-  OrderPathRequiredForIntentsError,
-  SessionChainRequiredError,
-  SourceChainsNotAvailableForUserOpFlowError,
   sendTransaction as sendTransactionInternal,
-  UserOperationRequiredForSmartSessionsError,
+  sendUserOperation as sendUserOperationInternal,
+  type TransactionResult,
+  type TransactionStatus,
+  type UserOperationResult,
   waitForExecution as waitForExecutionInternal,
 } from './execution'
+import {
+  type BatchPermit2Result,
+  checkERC20AllowanceDirect,
+  checkERC20Allowance as checkERC20AllowanceInternal,
+  getPermit2Address,
+  type MultiChainPermit2Config,
+  type MultiChainPermit2Result,
+  signPermit2Batch,
+  signPermit2Sequential,
+} from './execution/permit2'
 import {
   getSessionDetails as getSessionDetailsInternal,
   type SessionDetails,
 } from './execution/smart-session'
 import {
-  type IntentData,
+  type IntentRoute,
   type PreparedTransactionData,
+  type PreparedUserOperationData,
   prepareTransaction as prepareTransactionInternal,
+  prepareUserOperation as prepareUserOperationInternal,
   type SignedTransactionData,
+  type SignedUserOperationData,
   signAuthorizations as signAuthorizationsInternal,
   signMessage as signMessageInternal,
   signTransaction as signTransactionInternal,
   signTypedData as signTypedDataInternal,
+  signUserOperation as signUserOperationInternal,
+  simulateTransaction as simulateTransactionInternal,
   submitTransaction as submitTransactionInternal,
+  submitUserOperation as submitUserOperationInternal,
 } from './execution/utils'
 import {
   getOwners as getOwnersInternal,
   getValidators as getValidatorsInternal,
 } from './modules'
 import {
-  AuthenticationRequiredError,
   getSupportedTokens,
   getTokenAddress,
-  InsufficientBalanceError,
   type IntentCost,
   type IntentInput,
-  IntentNotFoundError,
   type IntentOp,
   type IntentOpStatus,
   type IntentResult,
-  type IntentRoute,
-  InvalidApiKeyError,
-  InvalidIntentSignatureError,
-  isOrchestratorError,
-  NoPathFoundError,
-  OnlyOneTargetTokenAmountCanBeUnsetError,
-  OrchestratorError,
   type Portfolio,
   type SettlementSystem,
   type SignedIntentOp,
-  TokenNotSupportedError,
-  UnsupportedChainError,
-  UnsupportedChainIdError,
-  UnsupportedTokenError,
 } from './orchestrator'
 import type {
+  AccountProviderConfig,
+  AccountType,
+  BundlerConfig,
   Call,
+  CallInput,
+  MultiFactorValidatorConfig,
+  OwnableValidatorConfig,
+  OwnerSet,
+  PaymasterConfig,
+  Policy,
+  ProviderConfig,
+  Recovery,
   RhinestoneAccountConfig,
+  RhinestoneConfig,
   Session,
   SignerSet,
+  TokenRequest,
+  TokenSymbol,
   Transaction,
+  UniversalActionPolicyParamCondition,
+  UserOperationTransaction,
+  WebauthnValidatorConfig,
 } from './types'
 
 interface RhinestoneAccount {
   config: RhinestoneAccountConfig
-  deploy: (chain: Chain, session?: Session) => Promise<void>
+  deploy: (chain: Chain, session?: Session) => Promise<boolean>
+  isDeployed: (chain: Chain) => Promise<boolean>
+  setup: (chain: Chain) => Promise<boolean>
   deployStandaloneWithEoa: (
     chain: Chain,
     config: RhinestoneAccountConfig,
@@ -148,17 +140,38 @@ interface RhinestoneAccount {
     signedTransaction: SignedTransactionData,
     authorizations?: SignedAuthorizationList,
   ) => Promise<TransactionResult>
+  simulateTransaction: (
+    signedTransaction: SignedTransactionData,
+    authorizations?: SignedAuthorizationList,
+  ) => Promise<IntentResult>
   sendTransaction: (transaction: Transaction) => Promise<TransactionResult>
-  waitForExecution: (
+  prepareUserOperation: (
+    transaction: UserOperationTransaction,
+  ) => Promise<PreparedUserOperationData>
+  signUserOperation: (
+    preparedUserOperation: PreparedUserOperationData,
+  ) => Promise<SignedUserOperationData>
+  submitUserOperation: (
+    signedUserOperation: SignedUserOperationData,
+  ) => Promise<UserOperationResult>
+  sendUserOperation: (
+    transaction: UserOperationTransaction,
+  ) => Promise<UserOperationResult>
+  waitForExecution(
     result: TransactionResult,
     acceptsPreconfirmations?: boolean,
-  ) => Promise<IntentOpStatus | UserOperationReceipt>
+  ): Promise<TransactionStatus>
+  waitForExecution(
+    result: UserOperationResult,
+    acceptsPreconfirmations?: boolean,
+  ): Promise<UserOperationReceipt>
   getAddress: () => Address
   getPortfolio: (onTestnets?: boolean) => Promise<Portfolio>
   getMaxSpendableAmount: (
     chain: Chain,
     tokenAddress: Address,
     gasUnits: bigint,
+    sponsored?: boolean,
   ) => Promise<bigint>
   getSessionDetails: (
     sessions: Session[],
@@ -170,6 +183,7 @@ interface RhinestoneAccount {
     threshold: number
   } | null>
   getValidators: (chain: Chain) => Promise<Address[]>
+  checkERC20Allowance: (tokenAddress: Address, chain: Chain) => Promise<bigint>
 }
 
 /**
@@ -179,8 +193,17 @@ interface RhinestoneAccount {
  * @returns account
  */
 async function createRhinestoneAccount(
-  config: RhinestoneAccountConfig,
+  config: RhinestoneConfig,
 ): Promise<RhinestoneAccount> {
+  // Sanity check for existing (externally created) accounts
+  // Ensures we decode the initdata correctly
+  checkAddress(config)
+
+  // Validate that owners field is provided for non-EOA accounts
+  if (config.account?.type !== 'eoa' && !config.owners) {
+    throw new OwnersFieldRequiredError()
+  }
+
   /**
    * Deploys the account on a given chain
    * @param chain Chain to deploy the account on
@@ -190,12 +213,22 @@ async function createRhinestoneAccount(
     return deployInternal(config, chain, session)
   }
 
-  function deployStandaloneWithEoa(
-    chain: Chain,
-    config: RhinestoneAccountConfig,
-    deployer: Account,
-  ) {
-    return deployStandaloneWithEoaInternal(chain, config, deployer)
+  /**
+   * Checks if the account is deployed on a given chain
+   * @param chain Chain to check if the account is deployed on
+   * @returns true if the account is deployed, false otherwise
+   */
+  function isDeployed(chain: Chain) {
+    return isDeployedInternal(config, chain)
+  }
+
+  /**
+   * Sets up the existing account on a given chain
+   * by installing the missing modules (if any).
+   * @param chain Chain to set up the account on
+   */
+  function setup(chain: Chain) {
+    return setupInternal(config, chain)
   }
 
   /**
@@ -204,6 +237,14 @@ async function createRhinestoneAccount(
    */
   function signEip7702InitData() {
     return signEip7702InitDataInternal(config)
+  }
+
+  function deployStandaloneWithEoa(
+    chain: Chain,
+    accountConfig: RhinestoneAccountConfig,
+    deployer: Account,
+  ) {
+    return deployStandaloneWithEoaInternal(chain, accountConfig, deployer)
   }
 
   /**
@@ -277,7 +318,7 @@ async function createRhinestoneAccount(
    * Submit a transaction
    * @param signedTransaction Signed transaction data
    * @param authorizations EIP-7702 authorizations to submit (optional)
-   * @returns transaction result object (an intent ID or a UserOp hash)
+   * @returns transaction result object (a UserOp hash)
    * @see {@link signTransaction} to sign the transaction data
    * @see {@link signAuthorizations} to sign the required EIP-7702 authorizations
    */
@@ -293,12 +334,67 @@ async function createRhinestoneAccount(
   }
 
   /**
+   * Prepare a user operation data
+   * @param transaction User operation to prepare
+   * @returns prepared user operation data
+   */
+  function prepareUserOperation(transaction: UserOperationTransaction) {
+    return prepareUserOperationInternal(config, transaction)
+  }
+
+  /**
+   * Sign a user operation
+   * @param preparedUserOperation Prepared user operation data
+   * @returns signed user operation data
+   * @see {@link prepareUserOperation} to prepare the user operation data for signing
+   */
+  function signUserOperation(preparedUserOperation: PreparedUserOperationData) {
+    return signUserOperationInternal(config, preparedUserOperation)
+  }
+  /**
+   * Submit a transaction
+   * @param signedTransaction Signed transaction data
+   * @returns transaction result object (a UserOp hash)
+   * @see {@link signUserOperation} to sign the user operation data
+   */
+  function submitUserOperation(signedUserOperation: SignedUserOperationData) {
+    return submitUserOperationInternal(config, signedUserOperation)
+  }
+
+  /**
+   * Simulate a transaction
+   * @param signedTransaction Signed transaction data
+   * @param authorizations EIP-7702 authorizations to simulate (optional)
+   * @returns simulation result
+   * @see {@link sendTransaction} to send the transaction
+   */
+  function simulateTransaction(
+    signedTransaction: SignedTransactionData,
+    authorizations?: SignedAuthorizationList,
+  ) {
+    return simulateTransactionInternal(
+      config,
+      signedTransaction,
+      authorizations ?? [],
+    )
+  }
+
+  /**
    * Sign and send a transaction
    * @param transaction Transaction to send
-   * @returns transaction result object (an intent ID or a UserOp hash)
+   * @returns transaction result object (an intent ID)
    */
   function sendTransaction(transaction: Transaction) {
     return sendTransactionInternal(config, transaction)
+  }
+
+  /**
+   * Sign and send a user operation
+   * @param transaction User operation to send
+   * @returns user operation result object (a UserOp hash)
+   */
+  function sendUserOperation(transaction: UserOperationTransaction) {
+    return sendUserOperationInternal(config, transaction)
   }
 
   /**
@@ -309,6 +405,14 @@ async function createRhinestoneAccount(
    */
   function waitForExecution(
     result: TransactionResult,
+    acceptsPreconfirmations?: boolean,
+  ): Promise<TransactionStatus>
+  function waitForExecution(
+    result: UserOperationResult,
+    acceptsPreconfirmations?: boolean,
+  ): Promise<UserOperationReceipt>
+  function waitForExecution(
+    result: TransactionResult | UserOperationResult,
     acceptsPreconfirmations = true,
   ) {
     return waitForExecutionInternal(config, result, acceptsPreconfirmations)
@@ -342,8 +446,15 @@ async function createRhinestoneAccount(
     chain: Chain,
     tokenAddress: Address,
     gasUnits: bigint,
+    sponsored: boolean = false,
   ) {
-    return getMaxSpendableAmountInternal(config, chain, tokenAddress, gasUnits)
+    return getMaxSpendableAmountInternal(
+      config,
+      chain,
+      tokenAddress,
+      gasUnits,
+      sponsored,
+    )
   }
 
   /**
@@ -375,9 +486,24 @@ async function createRhinestoneAccount(
     return getSessionDetailsInternal(config, sessions, sessionIndex, signature)
   }
 
+  /**
+   * Check ERC20 allowance for the account owner and token (using Permit2 as spender)
+   * @param tokenAddress The token contract address
+   * @param chain The chain to check the allowance on
+   * @returns The allowance amount
+   */
+  function checkERC20Allowance(tokenAddress: Address, chain: Chain) {
+    if (!config.provider) {
+      throw new Error('Provider configuration is required')
+    }
+    return checkERC20AllowanceInternal(tokenAddress, chain, config)
+  }
+
   return {
     config,
     deploy,
+    isDeployed,
+    setup,
     deployStandaloneWithEoa,
     signEip7702InitData,
     prepareTransaction,
@@ -386,7 +512,12 @@ async function createRhinestoneAccount(
     signMessage,
     signTypedData,
     submitTransaction,
+    simulateTransaction,
+    prepareUserOperation,
+    signUserOperation,
+    submitUserOperation,
     sendTransaction,
+    sendUserOperation,
     waitForExecution,
     getAddress,
     getPortfolio,
@@ -394,89 +525,103 @@ async function createRhinestoneAccount(
     getSessionDetails,
     getOwners,
     getValidators,
+    checkERC20Allowance,
+  }
+}
+
+class RhinestoneSDK {
+  private apiKey?: string
+  private endpointUrl?: string
+  private provider?: ProviderConfig
+  private bundler?: BundlerConfig
+  private paymaster?: PaymasterConfig
+
+  constructor(options?: {
+    apiKey?: string
+    endpointUrl?: string
+    provider?: ProviderConfig
+    bundler?: BundlerConfig
+    paymaster?: PaymasterConfig
+  }) {
+    this.apiKey = options?.apiKey
+    this.endpointUrl = options?.endpointUrl
+    this.provider = options?.provider
+    this.bundler = options?.bundler
+    this.paymaster = options?.paymaster
+  }
+
+  createAccount(config: RhinestoneAccountConfig) {
+    const rhinestoneConfig: RhinestoneConfig = {
+      ...config,
+      apiKey: this.apiKey,
+      endpointUrl: this.endpointUrl,
+      provider: this.provider,
+      bundler: this.bundler,
+      paymaster: this.paymaster,
+    }
+    return createRhinestoneAccount(rhinestoneConfig)
   }
 }
 
 export {
-  createRhinestoneAccount,
-  deployStandaloneWithEoaInternal as deployStandaloneWithEoa,
-  // Actions
-  addOwner,
-  addPasskeyOwner,
-  changeMultiFactorThreshold,
-  changeThreshold,
-  changePasskeyThreshold,
-  disableEcdsa,
-  disableMultiFactor,
-  disablePasskeys,
-  enableEcdsa,
-  enableMultiFactor,
-  enablePasskeys,
+  RhinestoneSDK,
+  walletClientToAccount,
   encodeSmartSessionSignature,
-  recover,
-  recoverEcdsaOwnership,
-  recoverPasskeyOwnership,
-  removeOwner,
-  removePasskeyOwner,
-  removeSubValidator,
-  setSubValidator,
-  setUpRecovery,
-  // Account errors
-  isAccountError,
-  AccountError,
-  Eip7702AccountMustHaveEoaError,
-  ExistingEip7702AccountsNotSupportedError,
-  FactoryArgsNotAvailableError,
-  SmartSessionsNotEnabledError,
-  SigningNotSupportedForAccountError,
-  SignMessageNotSupportedByAccountError,
-  Eip7702NotSupportedForAccountError,
-  // Execution errors
-  isExecutionError,
-  IntentFailedError,
-  ExecutionError,
-  SourceChainsNotAvailableForUserOpFlowError,
-  UserOperationRequiredForSmartSessionsError,
-  OrderPathRequiredForIntentsError,
-  SessionChainRequiredError,
-  // Orchestrator errors
-  isOrchestratorError,
-  AuthenticationRequiredError,
-  InsufficientBalanceError,
-  InvalidApiKeyError,
-  InvalidIntentSignatureError,
-  NoPathFoundError,
-  OnlyOneTargetTokenAmountCanBeUnsetError,
-  OrchestratorError,
-  IntentNotFoundError,
-  TokenNotSupportedError,
-  UnsupportedChainError,
-  UnsupportedChainIdError,
-  UnsupportedTokenError,
   // Registry functions
   getSupportedTokens,
   getTokenAddress,
+  // Compatibility export for admin service
+  deployStandaloneWithEoaInternal as deployStandaloneWithEoa,
+  // Permit2 helpers
+  checkERC20AllowanceDirect,
+  getPermit2Address,
+  // Multi-chain permit2 signing
+  signPermit2Batch,
+  signPermit2Sequential,
 }
 export type {
   RhinestoneAccount,
-  Session,
+  AccountType,
+  RhinestoneAccountConfig,
+  AccountProviderConfig,
+  ProviderConfig,
+  BundlerConfig,
+  PaymasterConfig,
+  Transaction,
+  TokenSymbol,
+  CallInput,
   Call,
-  IntentData,
+  TokenRequest,
+  OwnerSet,
+  OwnableValidatorConfig,
+  WebauthnValidatorConfig,
+  MultiFactorValidatorConfig,
+  SignerSet,
+  Session,
+  Recovery,
+  Policy,
+  UniversalActionPolicyParamCondition,
   PreparedTransactionData,
   SignedTransactionData,
   TransactionResult,
+  PreparedUserOperationData,
+  SignedUserOperationData,
+  UserOperationResult,
   IntentCost,
   IntentInput,
   IntentOp,
   IntentOpStatus,
-  IntentResult,
   IntentRoute,
   SettlementSystem,
   SignedIntentOp,
   Portfolio,
+  // Multi-chain permit2 types
+  MultiChainPermit2Config,
+  MultiChainPermit2Result,
+  BatchPermit2Result,
 }
 
-// WebAuthn Validator contract helpers
+// WebAuthn Validator contract helpers (keep Charter API stable)
 export {
   generateCredentialId,
   getCredentialIds,
