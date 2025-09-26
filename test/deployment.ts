@@ -17,7 +17,7 @@ import { base } from 'viem/chains'
 import { describe, expect, it } from 'vitest'
 
 import './utils/polyfill'
-import { createRhinestoneAccount } from '../src'
+import { RhinestoneSDK } from '../src'
 import { biconomyImplementationAbi } from './abi/biconomy'
 import { ownbleValidatorAbi } from './abi/validators'
 import { getAnvil } from './utils/anvil'
@@ -25,9 +25,9 @@ import { getForkUrl } from './utils/utils'
 
 const SENTINEL_ADDRESS: Address = '0x0000000000000000000000000000000000000001'
 const OWNABLE_VALIDATOR_ADDRESS: Address =
-  '0x000000000013fdB5234E4E3162a810F54d9f7E98'
+  '0x000000000013fdb5234e4e3162a810f54d9f7e98'
 const INTENT_EXECUTOR_ADDRESS: Address =
-  '0x00000000005aD9ce1f5035FD62CA96CEf16AdAAF'
+  '0x00000000005ad9ce1f5035fd62ca96cef16adaaf'
 
 export function runDeploymentTests() {
   describe('Account Deployment', () => {
@@ -40,9 +40,8 @@ export function runDeploymentTests() {
         async () => {
           const ownerPrivateKey = generatePrivateKey()
           const ownerAccount = privateKeyToAccount(ownerPrivateKey)
-          const rhinestoneApiKey = 'MOCK_KEY'
-
-          const rhinestoneAccount = await createRhinestoneAccount({
+          const rhinestone = new RhinestoneSDK()
+          const rhinestoneAccount = await rhinestone.createAccount({
             account: {
               type: 'nexus',
             },
@@ -50,7 +49,6 @@ export function runDeploymentTests() {
               type: 'ecdsa',
               accounts: [ownerAccount],
             },
-            rhinestoneApiKey,
           })
 
           // Check the account is not yet deployed
@@ -154,9 +152,9 @@ export function runDeploymentTestCases() {
         async () => {
           const ownerPrivateKey = generatePrivateKey()
           const ownerAccount = privateKeyToAccount(ownerPrivateKey)
-          const rhinestoneApiKey = 'MOCK_KEY'
 
-          const rhinestoneAccount = await createRhinestoneAccount({
+          const rhinestone = new RhinestoneSDK()
+          const rhinestoneAccount = await rhinestone.createAccount({
             account: {
               type: 'nexus',
             },
@@ -164,7 +162,6 @@ export function runDeploymentTestCases() {
               type: 'ecdsa',
               accounts: [ownerAccount],
             },
-            rhinestoneApiKey,
           })
 
           // Check the account is not yet deployed

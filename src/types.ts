@@ -1,29 +1,60 @@
 import type { Account, Address, Chain, Hex } from 'viem'
 import type { WebAuthnAccount } from 'viem/account-abstraction'
 import type { EnableSessionData } from './modules/validators/smart-sessions'
+import type { SettlementLayer } from './orchestrator/types'
 
-type AccountType = 'safe' | 'nexus' | 'kernel' | 'startale'
+type AccountType = 'safe' | 'nexus' | 'kernel' | 'startale' | 'custom' | 'eoa'
 
-interface AccountProviderConfig {
-  type: AccountType
+interface SafeAccount {
+  type: 'safe'
+  version?: '1.4.1'
+  adapter?: '1.0.0' | '2.0.0'
 }
+
+interface NexusAccount {
+  type: 'nexus'
+  version?: '1.0.2' | '1.2.0' | 'rhinestone-1.0.0-beta' | 'rhinestone-1.0.0'
+}
+
+interface KernelAccount {
+  type: 'kernel'
+  version?: '3.1' | '3.2' | '3.3'
+}
+
+interface StartaleAccount {
+  type: 'startale'
+}
+
+interface EoaAccount {
+  type: 'eoa'
+}
+
+type AccountProviderConfig =
+  | SafeAccount
+  | NexusAccount
+  | KernelAccount
+  | StartaleAccount
+  | EoaAccount
 
 interface OwnableValidatorConfig {
   type: 'ecdsa'
   accounts: Account[]
   threshold?: number
+  module?: Address
 }
 
 interface WebauthnValidatorConfig {
   type: 'passkey'
   accounts: WebAuthnAccount[]
   threshold?: number
+  module?: Address
 }
 
 interface MultiFactorValidatorConfig {
   type: 'multi-factor'
   validators: (OwnableValidatorConfig | WebauthnValidatorConfig)[]
   threshold?: number
+  module?: Address
 }
 
 interface ProviderConfig {
@@ -125,28 +156,53 @@ interface Recovery {
 
 interface RhinestoneAccountConfig {
   account?: AccountProviderConfig
-  owners: OwnerSet
-  rhinestoneApiKey?: string
+  owners?: OwnerSet
   sessions?: Session[]
   recovery?: Recovery
   eoa?: Account
+  initData?: {
+    address: Address
+    factory: Address
+    factoryData: Hex
+    intentExecutorInstalled: boolean
+  }
+}
+
+interface RhinestoneSDKConfig {
+  apiKey?: string
   provider?: ProviderConfig
   bundler?: BundlerConfig
   paymaster?: PaymasterConfig
   /**
    * @internal
-   * For internal testing only - do not use
+   * Optional orchestrator URL override for internal testing - do not use
    */
-  useDev?: boolean
+  endpointUrl?: string
 }
+
+type RhinestoneConfig = RhinestoneAccountConfig & RhinestoneSDKConfig
 
 type TokenSymbol = 'ETH' | 'WETH' | 'USDC' | 'USDT'
 
-interface CallInput {
+interface CalldataInput {
   to: Address | TokenSymbol
   data?: Hex
   value?: bigint
 }
+
+interface CallResolveContext {
+  config: RhinestoneConfig
+  chain: Chain
+  accountAddress: Address
+}
+
+interface LazyCallInput {
+  resolve: (
+    context: CallResolveContext,
+  ) => Promise<CalldataInput | CalldataInput[]>
+}
+
+type CallInput = CalldataInput | LazyCallInput
 
 interface Call {
   to: Address
@@ -159,16 +215,24 @@ interface TokenRequest {
   amount: bigint
 }
 
+type SourceAssetInput =
+  | (Address | TokenSymbol)[]
+  | {
+      [chainId in number]?: (Address | TokenSymbol)[]
+    }
+
 type OwnerSignerSet =
   | {
       type: 'owner'
       kind: 'ecdsa'
       accounts: Account[]
+      module?: Address
     }
   | {
       type: 'owner'
       kind: 'passkey'
       accounts: WebAuthnAccount[]
+      module?: Address
     }
   | {
       type: 'owner'
@@ -185,6 +249,7 @@ type OwnerSignerSet =
             accounts: WebAuthnAccount[]
           }
       )[]
+      module?: Address
     }
 
 interface SessionSignerSet {
@@ -207,6 +272,10 @@ interface BaseTransaction {
   signers?: SignerSet
   sponsored?: boolean
   eip7702InitSignature?: Hex
+  sourceAssets?: SourceAssetInput
+  feeAsset?: Address | TokenSymbol
+  settlementLayers?: SettlementLayer[]
+  lockFunds?: boolean
 }
 
 interface SameChainTransaction extends BaseTransaction {
@@ -218,20 +287,34 @@ interface CrossChainTransaction extends BaseTransaction {
   targetChain: Chain
 }
 
+interface UserOperationTransaction {
+  calls: CallInput[]
+  gasLimit?: bigint
+  signers?: SignerSet
+  chain: Chain
+}
+
 type Transaction = SameChainTransaction | CrossChainTransaction
 
 export type {
   AccountType,
   RhinestoneAccountConfig,
+  RhinestoneSDKConfig,
+  RhinestoneConfig,
   AccountProviderConfig,
   ProviderConfig,
   BundlerConfig,
   PaymasterConfig,
   Transaction,
+  UserOperationTransaction,
   TokenSymbol,
+  CalldataInput,
+  LazyCallInput,
   CallInput,
+  CallResolveContext,
   Call,
   TokenRequest,
+  SourceAssetInput,
   OwnerSet,
   OwnableValidatorConfig,
   WebauthnValidatorConfig,
