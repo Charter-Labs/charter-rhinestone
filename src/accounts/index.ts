@@ -13,6 +13,7 @@ import {
   size,
   type TypedData,
   zeroAddress,
+  zeroHash,
 } from 'viem'
 import {
   sendTransaction,
@@ -78,6 +79,12 @@ import {
   signEip7702InitData as signNexusEip7702InitData,
 } from './nexus'
 import {
+  getAddress as getPassportAddress,
+  getInstallData as getPassportInstallData,
+  getSessionSmartAccount as getPassportSessionSmartAccount,
+  packSignature as packPassportSignature,
+} from './passport'
+import {
   getAddress as getSafeAddress,
   getDeployArgs as getSafeDeployArgs,
   getGuardianSmartAccount as getSafeGuardianSmartAccount,
@@ -118,6 +125,17 @@ function getDeployArgs(config: RhinestoneConfig) {
     }
     case 'startale': {
       return getStartaleDeployArgs(config)
+    }
+    case 'passport': {
+      // Mocked data; will be overridden by the actual deploy args
+      return {
+        factory: zeroAddress,
+        factoryData: zeroHash,
+        salt: zeroHash,
+        implementation: zeroAddress,
+        initializationCallData: '0x',
+        initData: '0x',
+      }
     }
     case 'eoa': {
       throw new Error('EOA accounts do not have deploy args')
@@ -206,6 +224,9 @@ function getModuleInstallationCalls(
       case 'startale': {
         return [getStartaleInstallData(module)]
       }
+      case 'passport': {
+        return [getPassportInstallData(module)]
+      }
       case 'eoa': {
         throw new ModuleInstallationNotSupportedError(account.type)
       }
@@ -275,6 +296,9 @@ function getAddress(config: RhinestoneConfig) {
     case 'startale': {
       return getStartaleAddress(config)
     }
+    case 'passport': {
+      return getPassportAddress(config)
+    }
     case 'eoa': {
       if (!config.eoa) {
         throw new AccountError({
@@ -330,6 +354,10 @@ async function getPackedSignature(
         defaultValidatorAddress,
       )
     }
+    case 'passport': {
+      const signature = await signFn(hash)
+      return packPassportSignature(signature, validator, transformSignature)
+    }
     case 'kernel': {
       const signature = await signFn(wrapKernelMessageHash(hash, address))
       return packKernelSignature(signature, validator, transformSignature)
@@ -383,6 +411,10 @@ async function getTypedDataPackedSignature<
         defaultValidatorAddress,
       )
     }
+    case 'passport': {
+      const signature = await signFn(parameters)
+      return packPassportSignature(signature, validator, transformSignature)
+    }
     case 'kernel': {
       const address = getAddress(config)
       const signMessageFn = (hash: Hex) =>
@@ -430,7 +462,10 @@ async function isDeployed(config: RhinestoneConfig, chain: Chain) {
 async function deploy(
   config: RhinestoneConfig,
   chain: Chain,
-  session?: Session,
+  params?: {
+    session?: Session
+    sponsored?: boolean
+  },
 ): Promise<boolean> {
   const account = getAccountProvider(config)
 
@@ -446,10 +481,10 @@ async function deploy(
   if (asUserOp) {
     await deployWithBundler(chain, config)
   } else {
-    await deployWithIntent(chain, config)
+    await deployWithIntent(chain, config, params?.sponsored ?? false)
   }
-  if (session) {
-    await enableSmartSession(chain, config, session)
+  if (params?.session) {
+    await enableSmartSession(chain, config, params.session)
   }
   return true
 }
@@ -522,7 +557,11 @@ async function setup(config: RhinestoneConfig, chain: Chain): Promise<boolean> {
   return true
 }
 
-async function deployWithIntent(chain: Chain, config: RhinestoneConfig) {
+async function deployWithIntent(
+  chain: Chain,
+  config: RhinestoneConfig,
+  sponsored: boolean,
+) {
   const publicClient = createPublicClient({
     chain,
     transport: createTransport(chain, config.provider),
@@ -534,6 +573,7 @@ async function deployWithIntent(chain: Chain, config: RhinestoneConfig) {
     return
   }
   const result = await sendTransaction(config, {
+    sourceChains: [chain],
     targetChain: chain,
     calls: [
       {
@@ -541,6 +581,7 @@ async function deployWithIntent(chain: Chain, config: RhinestoneConfig) {
         data: '0x',
       },
     ],
+    sponsored,
   })
   await waitForExecution(config, result, true)
 }
@@ -750,6 +791,16 @@ async function getSmartSessionSmartAccount(
     }
     case 'kernel': {
       return getKernelSessionSmartAccount(
+        client,
+        address,
+        session,
+        smartSessionValidator.address,
+        enableData,
+        signFn,
+      )
+    }
+    case 'passport': {
+      return getPassportSessionSmartAccount(
         client,
         address,
         session,

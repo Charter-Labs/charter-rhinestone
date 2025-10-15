@@ -12,6 +12,7 @@ import type { UserOperationReceipt } from 'viem/account-abstraction'
 import {
   checkAddress,
   deploy as deployInternal,
+  getAccountProvider,
   getAddress as getAddressInternal,
   isDeployed as isDeployedInternal,
   OwnersFieldRequiredError,
@@ -20,7 +21,6 @@ import {
   deployStandaloneWithEoa as deployStandaloneWithEoaInternal,
 } from './accounts'
 import { walletClientToAccount } from './accounts/walletClient'
-import { encodeSmartSessionSignature } from './actions/smart-session'
 import {
   getMaxSpendableAmount as getMaxSpendableAmountInternal,
   getPortfolio as getPortfolioInternal,
@@ -58,7 +58,6 @@ import {
   signTransaction as signTransactionInternal,
   signTypedData as signTypedDataInternal,
   signUserOperation as signUserOperationInternal,
-  simulateTransaction as simulateTransactionInternal,
   submitTransaction as submitTransactionInternal,
   submitUserOperation as submitUserOperationInternal,
 } from './execution/utils'
@@ -73,9 +72,8 @@ import {
   type IntentInput,
   type IntentOp,
   type IntentOpStatus,
-  type IntentResult,
   type Portfolio,
-  type SettlementSystem,
+  type SettlementLayer,
   type SignedIntentOp,
 } from './orchestrator'
 import type {
@@ -105,7 +103,10 @@ import type {
 
 interface RhinestoneAccount {
   config: RhinestoneAccountConfig
-  deploy: (chain: Chain, session?: Session) => Promise<boolean>
+  deploy: (
+    chain: Chain,
+    params?: { session?: Session; sponsored?: boolean },
+  ) => Promise<boolean>
   isDeployed: (chain: Chain) => Promise<boolean>
   setup: (chain: Chain) => Promise<boolean>
   deployStandaloneWithEoa: (
@@ -140,10 +141,6 @@ interface RhinestoneAccount {
     signedTransaction: SignedTransactionData,
     authorizations?: SignedAuthorizationList,
   ) => Promise<TransactionResult>
-  simulateTransaction: (
-    signedTransaction: SignedTransactionData,
-    authorizations?: SignedAuthorizationList,
-  ) => Promise<IntentResult>
   sendTransaction: (transaction: Transaction) => Promise<TransactionResult>
   prepareUserOperation: (
     transaction: UserOperationTransaction,
@@ -209,8 +206,11 @@ async function createRhinestoneAccount(
    * @param chain Chain to deploy the account on
    * @param session Session to deploy the account on (optional)
    */
-  function deploy(chain: Chain, session?: Session) {
-    return deployInternal(config, chain, session)
+  function deploy(
+    chain: Chain,
+    params?: { session?: Session; sponsored?: boolean },
+  ) {
+    return deployInternal(config, chain, params)
   }
 
   /**
@@ -321,15 +321,18 @@ async function createRhinestoneAccount(
    * @returns transaction result object (a UserOp hash)
    * @see {@link signTransaction} to sign the transaction data
    * @see {@link signAuthorizations} to sign the required EIP-7702 authorizations
+   * @see {@link dryRun} true when intent is not executed onchain (internal use only)
    */
   function submitTransaction(
     signedTransaction: SignedTransactionData,
     authorizations?: SignedAuthorizationList,
+    dryRun?: boolean,
   ) {
     return submitTransactionInternal(
       config,
       signedTransaction,
       authorizations ?? [],
+      dryRun,
     )
   }
 
@@ -359,24 +362,6 @@ async function createRhinestoneAccount(
    */
   function submitUserOperation(signedUserOperation: SignedUserOperationData) {
     return submitUserOperationInternal(config, signedUserOperation)
-  }
-
-  /**
-   * Simulate a transaction
-   * @param signedTransaction Signed transaction data
-   * @param authorizations EIP-7702 authorizations to simulate (optional)
-   * @returns simulation result
-   * @see {@link sendTransaction} to send the transaction
-   */
-  function simulateTransaction(
-    signedTransaction: SignedTransactionData,
-    authorizations?: SignedAuthorizationList,
-  ) {
-    return simulateTransactionInternal(
-      config,
-      signedTransaction,
-      authorizations ?? [],
-    )
   }
 
   /**
@@ -473,7 +458,7 @@ async function createRhinestoneAccount(
    * @returns List of account validators
    */
   function getValidators(chain: Chain) {
-    const accountType = config.account?.type || 'nexus'
+    const accountType = getAccountProvider(config).type
     const account = getAddress()
     return getValidatorsInternal(accountType, account, chain, config.provider)
   }
@@ -512,7 +497,6 @@ async function createRhinestoneAccount(
     signMessage,
     signTypedData,
     submitTransaction,
-    simulateTransaction,
     prepareUserOperation,
     signUserOperation,
     submitUserOperation,
@@ -566,7 +550,6 @@ class RhinestoneSDK {
 export {
   RhinestoneSDK,
   walletClientToAccount,
-  encodeSmartSessionSignature,
   // Registry functions
   getSupportedTokens,
   getTokenAddress,
@@ -612,7 +595,7 @@ export type {
   IntentOp,
   IntentOpStatus,
   IntentRoute,
-  SettlementSystem,
+  SettlementLayer,
   SignedIntentOp,
   Portfolio,
   // Multi-chain permit2 types
