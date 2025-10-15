@@ -7,7 +7,7 @@ import {
 } from 'viem'
 import { mainnet } from 'viem/chains'
 import { describe, expect, test, vi } from 'vitest'
-import { accountA, accountB, MOCK_API_KEY } from '../../../test/consts'
+import { accountA, accountB } from '../../../test/consts'
 import { enableSessionsAbi } from '../abi/smart-sessions'
 import { MODULE_TYPE_ID_VALIDATOR } from '../common'
 import {
@@ -57,7 +57,6 @@ describe('Smart Sessions', () => {
             type: 'ecdsa',
             accounts: [accountA],
           },
-          rhinestoneApiKey: MOCK_API_KEY,
         }),
       ).toBeNull()
     })
@@ -69,7 +68,6 @@ describe('Smart Sessions', () => {
             type: 'ecdsa',
             accounts: [accountA],
           },
-          rhinestoneApiKey: MOCK_API_KEY,
           sessions: [],
         }),
       ).not.toBeNull()
@@ -81,7 +79,6 @@ describe('Smart Sessions', () => {
           type: 'ecdsa',
           accounts: [accountA],
         },
-        rhinestoneApiKey: MOCK_API_KEY,
         sessions: [
           {
             owners: {
@@ -128,7 +125,7 @@ describe('Smart Sessions', () => {
     const FALLBACK_SELECTOR = '0x00000001'
 
     test('default', async () => {
-      const call = await getEnableSessionCall(mainnet, {
+      const call = await getEnableSessionCall({
         owners: {
           type: 'ecdsa',
           accounts: [accountA],
@@ -147,7 +144,7 @@ describe('Smart Sessions', () => {
     })
 
     test('with action', async () => {
-      const call = await getEnableSessionCall(mainnet, {
+      const call = await getEnableSessionCall({
         owners: {
           type: 'ecdsa',
           accounts: [accountA],
@@ -180,7 +177,7 @@ describe('Smart Sessions', () => {
     })
 
     test('with policy', async () => {
-      const call = await getEnableSessionCall(mainnet, {
+      const call = await getEnableSessionCall({
         owners: {
           type: 'ecdsa',
           accounts: [accountA],
@@ -212,7 +209,7 @@ describe('Smart Sessions', () => {
     })
 
     test('with action policy', async () => {
-      const call = await getEnableSessionCall(mainnet, {
+      const call = await getEnableSessionCall({
         owners: {
           type: 'ecdsa',
           accounts: [accountA],

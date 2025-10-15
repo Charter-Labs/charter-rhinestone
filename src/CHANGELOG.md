@@ -1,5 +1,263 @@
 # @rhinestone/sdk
 
+## 1.0.3
+
+### Patch Changes
+
+- 35a6093: Smart sessions and module installation for Passport accounts
+
+## 1.0.2
+
+### Patch Changes
+
+- 3a6b21e: Enhance intent status polling logic
+
+## 1.0.1
+
+### Patch Changes
+
+- 501591f: Minimal Passport account support
+
+## 1.0.0
+
+### Major Changes
+
+- 036f989: The Compact support
+
+### Minor Changes
+
+- 6602670: Add Sonic support
+- b7b5faa: Support Startale account
+
+### Patch Changes
+
+- 0bb2c42: Fix API request in `getMaxTokenAmount`
+- 9e034b8: Take sponsorship into account in `getMaxSpendableAmount`
+- dea6f57: update compact address
+- e4dc710: Fix portfolio
+- d03fe29: Standalone intents
+- 43429c6: Multi source chain
+- a6b1718: Export the registry methods getSupportedTokens and getTokenAddress
+- 7ca0cc2: Enhance error handling
+- ae93ddc: - Introduce `RhinestoneSDK` an entry point
+  - Move action utilities into separate subpackages
+  - Make actions lazily executed
+  - Split the intent and userop flows
+- 883706c: Resource locking
+- 7e879d3: Remove `axios` dependency
+- 233c8bf: fix: always send setup ops
+- 12b4d87: Add signer conversion helpers methods
+- e21d83c: Update dependencies
+- 82f6851: Add relay types
+- 6107c7e: allow for settlement layer selection
+- 533c84f: - Selecting source assets (per chain or globally) by setting `sourceAssets`
+  - Don't pass the default token request when using same-chain settlement
+  - Choosing a fee token by setting `feeAsset`
+- d39b2ba: Expose missing types
+- 5bd056d: 7702 delegations
+- 9b1fa4f: Custon accounts
+- 865142b: Add `isDeployed` utility
+- 18566eb: Intent-based account deployments
+- 359d07f: Existing accounts support ("Bring your own account")
+- 912ee8a: Permit2 signing
+- 436daea: Add optional orchestratorUrl parameter for internal testing
+- 54f5506: Allow using token symbols
+- 9d09cc9: fix validation error
+- 1d76bad: Use latest contracts
+- ec215ed: Add transaction simulation method
+- 8e767ba: add soneium
+- 859a46d: Provide CJS exports for subpackages
+- 8fa26d7: add dry run flag (internal use only)
+- 29ccb04: Custom accounts support
+- 6750bdf: Move `@rhinestone/shared-configs` into package deps
+- 9719915: Fee sponsorship
+- 50774b2: ERC20 deposits for TheCompact
+- 109f624: Account signing utilities for message and typed data signing
+- f12656f: Passkey multisig
+- f6456f0: Multi-factor validator
+- 94605e9: updated 712 types
+- a10ed68: Add EOA support
+- ef7fd0e: - Custom JSON-RPC providers
+  - Biconomy bundler/paymaster
+  - Make `tokenRequests` optional
+- cf08197: Make Rhinestone API key optional (staging only)
+- af1de6b: remove status endpoint
+
+## 1.0.0-beta.43
+
+### Patch Changes
+
+- 9d09cc9: fix validation error
+
+## 1.0.0-beta.42
+
+### Patch Changes
+
+- dea6f57: update compact address
+
+## 1.0.0-beta.41
+
+### Patch Changes
+
+- d03fe29: Standalone intents
+- af1de6b: remove status endpoint
+
+## 1.0.0-beta.40
+
+### Patch Changes
+
+- 7ca0cc2: Enhance error handling
+
+## 1.0.0-beta.39
+
+### Patch Changes
+
+- 7e879d3: Remove `axios` dependency
+- 233c8bf: fix: always send setup ops
+
+## 1.0.0-beta.38
+
+### Patch Changes
+
+- 8fa26d7: add dry run flag (internal use only)
+
+## 1.0.0-alpha.37
+
+### Patch Changes
+
+- a10ed68: Add EOA support
+
+## 1.0.0-alpha.36
+
+### Patch Changes
+
+- 94605e9: updated 712 types
+
+## 1.0.0-alpha.35
+
+### Patch Changes
+
+- 859a46d: Provide CJS exports for subpackages
+
+## 1.0.0-alpha.34
+
+### Patch Changes
+
+- e21d83c: Update dependencies
+
+## 1.0.0-alpha.33
+
+### Patch Changes
+
+- ae93ddc: - Introduce `RhinestoneSDK` an entry point
+  - Move action utilities into separate subpackages
+  - Make actions lazily executed
+  - Split the intent and userop flows
+
+## 1.0.0-alpha.32
+
+### Patch Changes
+
+- 883706c: Resource locking
+
+## 1.0.0-alpha.31
+
+### Patch Changes
+
+- 533c84f: - Selecting source assets (per chain or globally) by setting `sourceAssets`
+  - Don't pass the default token request when using same-chain settlement
+  - Choosing a fee token by setting `feeAsset`
+
+## 1.0.0-alpha.30
+
+### Patch Changes
+
+- 912ee8a: Permit2 signing
+
+## 1.0.0-alpha.29
+
+### Patch Changes
+
+- 865142b: Add `isDeployed` utility
+
+## 1.0.0-alpha.28
+
+### Patch Changes
+
+- d39b2ba: Expose missing types
+
+## 1.0.0-alpha.27
+
+### Patch Changes
+
+- 9b1fa4f: Custon accounts
+
+## 1.0.0-alpha.26
+
+### Patch Changes
+
+- 359d07f: Existing accounts support ("Bring your own account")
+
+## 1.0.0-alpha.25
+
+### Patch Changes
+
+- 82f6851: Add relay types
+
+## 1.0.0-alpha.24
+
+### Patch Changes
+
+- 12b4d87: Add signer conversion helpers methods
+
+## 1.0.0-alpha.23
+
+### Patch Changes
+
+- 6107c7e: allow for settlement layer selection
+
+## 1.0.0-alpha.22
+
+### Patch Changes
+
+- 436daea: Add optional orchestratorUrl parameter for internal testing
+
+## 1.0.0-alpha.21
+
+### Minor Changes
+
+- 6602670: Add Sonic support
+
+## 1.0.0-alpha.20
+
+### Patch Changes
+
+- 9e034b8: Take sponsorship into account in `getMaxSpendableAmount`
+
+## 1.0.0-alpha.19
+
+### Patch Changes
+
+- 0bb2c42: Fix API request in `getMaxTokenAmount`
+
+## 1.0.0-alpha.18
+
+### Patch Changes
+
+- 6750bdf: Move `@rhinestone/shared-configs` into package deps
+
+## 1.0.0-alpha.17
+
+### Patch Changes
+
+- ec215ed: Add transaction simulation method
+
+## 1.0.0-alpha.16
+
+### Patch Changes
+
+- 29ccb04: Custom accounts support
+
 ## 1.0.0-alpha.15
 
 ### Patch Changes

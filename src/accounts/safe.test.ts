@@ -1,12 +1,7 @@
 import type { Address } from 'viem'
 import { describe, expect, test } from 'vitest'
 
-import {
-  accountA,
-  accountB,
-  MOCK_API_KEY,
-  passkeyAccount,
-} from '../../test/consts'
+import { accountA, accountB, passkeyAccount } from '../../test/consts'
 import { MODULE_TYPE_ID_VALIDATOR } from '../modules/common'
 import {
   getAddress,
@@ -31,7 +26,6 @@ describe('Accounts: Safe', () => {
           type: 'ecdsa',
           accounts: [accountA, accountB],
         },
-        rhinestoneApiKey: MOCK_API_KEY,
       })
 
       expect(factory).toEqual('0x4e1dcf7ad4e460cfd30791ccc4f9c8a4f820ec67')
@@ -59,7 +53,6 @@ describe('Accounts: Safe', () => {
           type: 'passkey',
           accounts: [passkeyAccount],
         },
-        rhinestoneApiKey: MOCK_API_KEY,
       })
 
       expect(factory).toEqual('0x4e1dcf7ad4e460cfd30791ccc4f9c8a4f820ec67')
@@ -74,6 +67,27 @@ describe('Accounts: Safe', () => {
       )
       expect(initializationCallData).toEqual(null)
     })
+
+    test('Existing account', () => {
+      const { factory, factoryData } = getDeployArgs({
+        owners: {
+          type: 'ecdsa',
+          accounts: [accountA, accountB],
+        },
+        initData: {
+          factory: '0x4e1dcf7ad4e460cfd30791ccc4f9c8a4f820ec67',
+          factoryData:
+            '0x1688f0b90000000000000000000000007579011ab74c46090561ea277ba79d510c6c00ff0000000000000000000000000000000000000000000000000000000000000060000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000844fff40e1ec88f0966a6bc17a138345cdf7519caf9a1e0bb840330108a6a4315f1028c39000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000060000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000',
+          address: '0xc41bb9cfB2658dD3D74Ada0862044f5f30304b38',
+          intentExecutorInstalled: true,
+        },
+      })
+
+      expect(factory).toEqual('0x4e1dcf7ad4e460cfd30791ccc4f9c8a4f820ec67')
+      expect(factoryData).toEqual(
+        '0x1688f0b90000000000000000000000007579011ab74c46090561ea277ba79d510c6c00ff0000000000000000000000000000000000000000000000000000000000000060000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000844fff40e1ec88f0966a6bc17a138345cdf7519caf9a1e0bb840330108a6a4315f1028c39000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000060000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000',
+      )
+    })
   })
 
   describe('Get Address', () => {
@@ -83,10 +97,9 @@ describe('Accounts: Safe', () => {
           type: 'ecdsa',
           accounts: [accountA, accountB],
         },
-        rhinestoneApiKey: MOCK_API_KEY,
       })
 
-      expect(address).toEqual('0x3a249204d37245504d4ab37ff88f574b222a6349')
+      expect(address).toEqual('0x3a249204D37245504d4aB37FF88f574B222a6349')
     })
 
     test('Passkey owner', () => {
@@ -95,10 +108,27 @@ describe('Accounts: Safe', () => {
           type: 'passkey',
           accounts: [passkeyAccount],
         },
-        rhinestoneApiKey: MOCK_API_KEY,
       })
 
-      expect(address).toEqual('0xe86e416045645e1ca4360d5dc396e4c513277c31')
+      expect(address).toEqual('0xE86e416045645E1Ca4360D5DC396E4c513277C31')
+    })
+
+    test('Existing account', () => {
+      const address = getAddress({
+        owners: {
+          type: 'ecdsa',
+          accounts: [accountA, accountB],
+        },
+        initData: {
+          factory: '0x4e1dcf7ad4e460cfd30791ccc4f9c8a4f820ec67',
+          factoryData:
+            '0x1688f0b90000000000000000000000007579011ab74c46090561ea277ba79d510c6c00ff0000000000000000000000000000000000000000000000000000000000000060000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000844fff40e1ec88f0966a6bc17a138345cdf7519caf9a1e0bb840330108a6a4315f1028c39000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000060000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000',
+          address: '0xc41bb9cfB2658dD3D74Ada0862044f5f30304b38',
+          intentExecutorInstalled: true,
+        },
+      })
+
+      expect(address).toEqual('0xc41bb9cfB2658dD3D74Ada0862044f5f30304b38')
     })
   })
 

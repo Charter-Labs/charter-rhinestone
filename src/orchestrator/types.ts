@@ -1,43 +1,17 @@
-import type { Address, Hex } from 'viem'
-import type { UserOperationReceipt } from 'viem/account-abstraction'
 import type {
-  arbitrum,
-  arbitrumSepolia,
-  base,
-  baseSepolia,
-  mainnet,
-  optimism,
-  optimismSepolia,
-  polygon,
-  sepolia,
-  soneium,
-  zksync,
-} from 'viem/chains'
+  SettlementLayer as CrossChainSettlementLayer,
+  SupportedChain,
+  SupportedMainnet,
+  SupportedOPStackMainnet,
+  SupportedOPStackTestnet,
+  SupportedTestnet,
+} from '@rhinestone/shared-configs'
+import type { Address, Hex } from 'viem'
 
-type SupportedTestnet =
-  | typeof sepolia.id
-  | typeof baseSepolia.id
-  | typeof arbitrumSepolia.id
-  | typeof optimismSepolia.id
-type SupportedMainnet =
-  | typeof mainnet.id
-  | typeof base.id
-  | typeof arbitrum.id
-  | typeof optimism.id
-  | typeof polygon.id
-  | typeof zksync.id
-  | typeof soneium.id
-type SupportedOPStackMainnet =
-  | typeof optimism.id
-  | typeof base.id
-  | typeof soneium.id
-type SupportedOPStackTestnet = typeof optimismSepolia.id | typeof baseSepolia.id
-type SupportedChain = SupportedMainnet | SupportedTestnet
 type SupportedTokenSymbol = 'ETH' | 'WETH' | 'USDC' | 'USDT'
 type SupportedToken = SupportedTokenSymbol | Address
 
-type SmartAccountType = 'GENERIC' | 'ERC7579'
-type AccountStatus = 'NOT_DEPLOYED' | SmartAccountType
+type AccountType = 'GENERIC' | 'ERC7579' | 'EOA'
 
 const INTENT_STATUS_PENDING = 'PENDING'
 const INTENT_STATUS_FAILED = 'FAILED'
@@ -91,14 +65,18 @@ interface Claim {
 
 interface Execution {
   to: Address
-  value: bigint
+  value: string
   data: Hex
 }
 
-type SettlementLayer = 'SAME_CHAIN' | 'ACROSS' | 'ECO'
+type SettlementLayer =
+  | 'SAME_CHAIN'
+  | 'INTENT_EXECUTOR'
+  | CrossChainSettlementLayer
 
 interface IntentOptions {
   topupCompact: boolean
+  feeToken?: Address | SupportedTokenSymbol
   sponsorSettings?: SponsorSettings
   settlementLayers?: SettlementLayer[]
 }
@@ -131,7 +109,7 @@ type Portfolio = PortfolioToken[]
 interface IntentInput {
   account: {
     address: Address
-    accountType: SmartAccountType
+    accountType: AccountType
     setupOps: {
       to: Address
       data: Hex
@@ -151,10 +129,8 @@ interface IntentInput {
     amount?: bigint
   }[]
   accountAccessList?: AccountAccessList
-  options?: IntentOptions
+  options: IntentOptions
 }
-
-type SettlementSystem = 'SAME_CHAIN' | 'ACROSS'
 
 interface IntentCost {
   hasFulfilledAll: boolean
@@ -162,39 +138,53 @@ interface IntentCost {
     {
       tokenAddress: Address
       hasFulfilled: boolean
-      amountSpent: bigint
-      destinationAmount: bigint
-      fee: bigint
+      amountSpent: string
+      destinationAmount: string
+      fee: string
     },
   ]
+  sponsoredFee: {
+    relayer: number
+    protocol: number
+  }
   tokensSpent: {
-    [chainId: number]: {
+    [chainId: string]: {
       [tokenAddress: Address]: {
         locked: string
         unlocked: string
+        version: number
       }
     }
   }
+}
+
+interface IntentOpElementMandate {
+  recipient: Address
+  tokenOut: [[string, string]]
+  destinationChainId: string
+  fillDeadline: string
+  destinationOps: Execution[]
+  preClaimOps: Execution[]
+  qualifier: {
+    settlementContext: {
+      settlementLayer: SettlementLayer
+      usingJIT: boolean
+      using7579: boolean
+    }
+    encodedVal: Hex
+  }
+  v: number
+  minGas: string
 }
 
 interface IntentOpElement {
   arbiter: Address
   chainId: string
   idsAndAmounts: [[string, string]]
+  spendTokens: [[string, string]]
   beforeFill: boolean
-  smartAccountStatus: SmartAccountType
-  mandate: {
-    recipient: Address
-    tokenOut: [[string, string]]
-    destinationChainId: string
-    fillDeadline: string
-    destinationOps: Execution[]
-    preClaimOps: Execution[]
-    qualifier: {
-      settlementSystem: SettlementSystem
-      encodedVal: Hex
-    }
-  }
+  smartAccountStatus: AccountContext
+  mandate: IntentOpElementMandate
 }
 
 interface IntentOp {
@@ -204,6 +194,7 @@ interface IntentOp {
   elements: IntentOpElement[]
   serverSignature: string
   signedMetadata: {
+    fees: unknown
     quotes: Record<Address, unknown[]>
     tokenPrices: Record<string, number>
     opGasParams: Record<
@@ -222,16 +213,24 @@ interface IntentOp {
   }
 }
 
+interface AccountContext {
+  accountType: 'smartAccount'
+  isDeployed: boolean
+  isERC7579: boolean
+  erc7579AccountType: string
+  erc7579AccountVersion: string
+}
+
 interface Account {
   address: Address
-  accountType: SmartAccountType
+  accountType: AccountType
   setupOps: Pick<Execution, 'to' | 'data'>[]
   delegations?: Delegations
   emissaryConfig?: EmissarySetupConfig
 }
 
 type AccountWithContext = Omit<Account, 'delegations'> & {
-  accountContext: { [chainId: number]: AccountStatus }
+  accountContext: { [chainId: number]: AccountContext }
   requiredDelegations?: Delegations
 }
 
@@ -319,21 +318,16 @@ export type OPNetworkParams =
     }
 
 interface IntentOpStatus {
-  type: 'intent'
   status: IntentStatus
+  claims: Claim[]
+  destinationChainId: number
+  userAddress: Address
   fillTimestamp?: number
   fillTransactionHash?: Hex
-  claims: Claim[]
-}
-
-interface UserOpStatus {
-  type: 'userop'
-  receipt: UserOperationReceipt
 }
 
 interface PortfolioTokenChainResponse {
   chainId: number
-  accountStatus: AccountStatus
   tokenAddress: Address
   balance: {
     locked: string
@@ -342,8 +336,8 @@ interface PortfolioTokenChainResponse {
 }
 
 interface PortfolioTokenResponse {
-  tokenName: 'ETH'
-  tokenDecimals: 18
+  tokenName: string
+  tokenDecimals: number
   balance: {
     locked: string
     unlocked: string
@@ -356,20 +350,22 @@ type PortfolioResponse = PortfolioTokenResponse[]
 export type {
   TokenConfig,
   SupportedChain,
-  SettlementSystem,
+  SettlementLayer,
   IntentInput,
   IntentCost,
   IntentRoute,
   IntentOp,
   IntentOpElement,
+  IntentOpElementMandate,
   SignedIntentOp,
   IntentOpStatus,
-  UserOpStatus,
   IntentResult,
   PortfolioTokenResponse,
   PortfolioResponse,
   Portfolio,
   PortfolioToken,
+  MappedChainTokenAccessList,
+  UnmappedChainTokenAccessList,
 }
 export {
   INTENT_STATUS_PENDING,

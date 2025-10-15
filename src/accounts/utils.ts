@@ -1,4 +1,4 @@
-import type { Address, Chain, Client, Hex, Transport } from 'viem'
+import type { Address, Client, Hex } from 'viem'
 import {
   concatHex,
   encodeAbiParameters,
@@ -13,27 +13,9 @@ import {
   createPaymasterClient,
 } from 'viem/account-abstraction'
 import { readContract } from 'viem/actions'
-import {
-  arbitrum,
-  arbitrumSepolia,
-  base,
-  baseSepolia,
-  mainnet,
-  optimism,
-  optimismSepolia,
-  polygon,
-  sepolia,
-  soneium,
-  zksync,
-} from 'viem/chains'
 import { getAction } from 'viem/utils'
-import type { SupportedChain } from '../orchestrator'
-import type {
-  BundlerConfig,
-  PaymasterConfig,
-  ProviderConfig,
-  RhinestoneAccountConfig,
-} from '../types'
+import type { BundlerConfig, PaymasterConfig, RhinestoneConfig } from '../types'
+import { createTransport } from './json-rpc'
 
 type CallType = 'call' | 'delegatecall' | 'batchcall'
 
@@ -244,7 +226,7 @@ async function getAccountNonce(
   })
 }
 
-function getBundlerClient(config: RhinestoneAccountConfig, client: Client) {
+function getBundlerClient(config: RhinestoneConfig, client: Client) {
   function getBundlerEndpoint(config: BundlerConfig, chainId: number) {
     switch (config.type) {
       case 'pimlico':
@@ -309,47 +291,6 @@ async function getGasPriceEstimate(bundlerUrl: string) {
   return {
     maxFeePerGas: BigInt(json.result.fast.maxFeePerGas),
     maxPriorityFeePerGas: BigInt(json.result.fast.maxPriorityFeePerGas),
-  }
-}
-
-function createTransport(chain: Chain, provider?: ProviderConfig): Transport {
-  if (!provider) {
-    return http()
-  }
-
-  switch (provider.type) {
-    case 'alchemy': {
-      const alchemyNetwork = getAlchemyNetworkName(chain.id as SupportedChain)
-      const jsonRpcEndpoint = `https://${alchemyNetwork}.g.alchemy.com/v2/${provider.apiKey}`
-      return http(jsonRpcEndpoint)
-    }
-  }
-}
-
-function getAlchemyNetworkName(chainId: SupportedChain): string {
-  switch (chainId) {
-    case mainnet.id:
-      return 'eth-mainnet'
-    case sepolia.id:
-      return 'eth-sepolia'
-    case polygon.id:
-      return 'polygon-mainnet'
-    case optimism.id:
-      return 'opt-mainnet'
-    case optimismSepolia.id:
-      return 'opt-sepolia'
-    case arbitrum.id:
-      return 'arb-mainnet'
-    case arbitrumSepolia.id:
-      return 'arb-sepolia'
-    case base.id:
-      return 'base-mainnet'
-    case baseSepolia.id:
-      return 'base-sepolia'
-    case zksync.id:
-      return 'zksync-mainnet'
-    case soneium.id:
-      return 'soneium-mainnet'
   }
 }
 
