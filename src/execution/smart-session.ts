@@ -37,7 +37,7 @@ import {
 import type {
   AccountType,
   ProviderConfig,
-  RhinestoneAccountConfig,
+  RhinestoneConfig,
   Session,
 } from '../types'
 import { SessionChainRequiredError } from './error'
@@ -50,7 +50,7 @@ interface SessionDetails {
 }
 
 async function getSessionDetails(
-  config: RhinestoneAccountConfig,
+  config: RhinestoneConfig,
   sessions: Session[],
   sessionIndex: number,
   signature?: Hex,
@@ -112,7 +112,7 @@ async function getEnableSessionDetails(
       permissionId,
     )
 
-    const sessionData = await getSessionData(sessionChain, session, provider)
+    const sessionData = await getSessionData(session)
 
     const sessionDigest = await getSessionDigest(
       publicClient,
@@ -156,11 +156,7 @@ async function getEnableSessionDetails(
   if (!sessionChain) {
     throw new SessionChainRequiredError()
   }
-  const sessionData = await getSessionData(
-    sessionChain,
-    sessionToEnable,
-    provider,
-  )
+  const sessionData = await getSessionData(sessionToEnable)
 
   return {
     permissionEnableHash,
@@ -389,7 +385,7 @@ async function getSessionDigest(
 
 async function enableSmartSession(
   chain: Chain,
-  config: RhinestoneAccountConfig,
+  config: RhinestoneConfig,
   session: Session,
 ) {
   const publicClient = createPublicClient({
@@ -406,11 +402,7 @@ async function enableSmartSession(
   if (isEnabled) {
     return
   }
-  const enableSessionCall = await getEnableSessionCall(
-    chain,
-    session,
-    config.provider,
-  )
+  const enableSessionCall = await getEnableSessionCall(session)
 
   const smartAccount = await getSmartAccount(config, publicClient, chain)
   const bundlerClient = getBundlerClient(config, publicClient)

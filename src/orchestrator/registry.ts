@@ -1,4 +1,6 @@
-import { type Address, type Chain, isAddress, zeroAddress } from 'viem'
+import * as shared from '@rhinestone/shared-configs'
+import type { Address, Chain } from 'viem'
+import { isAddress } from 'viem'
 import {
   arbitrum,
   arbitrumSepolia,
@@ -10,56 +12,34 @@ import {
   polygon,
   sepolia,
   soneium,
-  zksync,
+  sonic,
 } from 'viem/chains'
 import type { TokenSymbol } from '../types'
-import registryData from './registry.json'
-import type { TokenConfig } from './types'
-
-interface TokenEntry {
-  symbol: string
-  address: Address
-  decimals: number
-  balanceSlot: number | null
-}
-
-interface ChainContracts {
-  spokepool: Address
-  hook: Address
-  originModule: Address
-  targetModule: Address
-  sameChainModule: Address
-}
-
-interface ChainEntry {
-  name: string
-  contracts: ChainContracts
-  tokens: TokenEntry[]
-}
-
-interface Registry {
-  [chainId: string]: ChainEntry
-}
-
-const registry: Registry = registryData as Registry
+import { UnsupportedChainError, UnsupportedTokenError } from './error'
+import type { SupportedChain, TokenConfig } from './types'
 
 function getSupportedChainIds(): number[] {
-  return Object.keys(registry).map((chainId) => parseInt(chainId, 10))
+  const arr = ((shared as any).chains ?? []) as any[]
+  return arr.map((c) => (c as any).id as number)
 }
 
-function getChainEntry(chainId: number): ChainEntry | undefined {
+function getChainEntry(chainId: number) {
+  const registry =
+    (shared as any).chainRegistry || (shared as any).ChainRegistry
   return registry[chainId.toString()]
 }
 
 function getWethAddress(chain: Chain): Address {
   const chainEntry = getChainEntry(chain.id)
   if (!chainEntry) {
-    throw new Error(`Unsupported chain ${chain.id}`)
+    throw new UnsupportedChainError(chain.id)
   }
 
-  const wethToken = chainEntry.tokens.find((token) => token.symbol === 'WETH')
+  const wethToken = chainEntry.tokens.find(
+    (token: any) => token.symbol === 'WETH',
+  )
   if (!wethToken) {
-    throw new Error(`WETH not found for chain ${chain.id}`)
+    throw new UnsupportedTokenError('WETH', chain.id)
   }
 
   return wethToken.address
@@ -68,65 +48,63 @@ function getWethAddress(chain: Chain): Address {
 function getTokenSymbol(tokenAddress: Address, chainId: number): string {
   const chainEntry = getChainEntry(chainId)
   if (!chainEntry) {
-    throw new Error(`Unsupported chain ${chainId}`)
+    throw new UnsupportedChainError(chainId)
   }
 
   const token = chainEntry.tokens.find(
-    (t) => t.address.toLowerCase() === tokenAddress.toLowerCase(),
+    (t: any) =>
+      (t.address as string).toLowerCase() === tokenAddress.toLowerCase(),
   )
 
   if (!token) {
-    throw new Error(
-      `Unsupported token address ${tokenAddress} for chain ${chainId}`,
-    )
+    throw new UnsupportedTokenError(tokenAddress, chainId)
   }
 
   return token.symbol
 }
 
-function getTokenAddress(tokenSymbol: TokenSymbol, chainId: number): Address {
-  if (chainId === 137 && tokenSymbol === 'ETH') {
-    throw new Error(`Chain ${chainId} does not allow for ETH to be used`)
+function getTokenAddress(
+  token: TokenSymbol | Address,
+  chainId: number,
+): Address {
+  if (!isChainIdSupported(chainId)) {
+    throw new UnsupportedChainError(chainId)
   }
-  if (tokenSymbol === 'ETH') {
-    return zeroAddress
-  }
-
-  const chainEntry = getChainEntry(chainId)
-  if (!chainEntry) {
-    throw new Error(`Unsupported chain ${chainId}`)
-  }
-
-  const token = chainEntry.tokens.find((t) => t.symbol === tokenSymbol)
-  if (!token) {
-    throw new Error(`Unsupported token symbol ${tokenSymbol}`)
-  }
-
-  return token.address
+  if (typeof token === 'string' && isAddress(token)) return token as Address
+  const tokens = getSupportedTokens(chainId)
+  const found = tokens.find((x: TokenConfig) => x.symbol === token)
+  if (!found) throw new UnsupportedTokenError(token as string, chainId)
+  return found.address
 }
 
-function getChainById(chainId: number): Chain | undefined {
-  const supportedChains: Chain[] = [
-    mainnet,
-    sepolia,
-    base,
-    baseSepolia,
-    arbitrum,
-    arbitrumSepolia,
-    optimism,
-    optimismSepolia,
-    polygon,
-    zksync,
-    soneium,
-  ]
-  return supportedChains.find((chain) => chain.id === chainId)
+function isChainIdSupported(chainId: number): chainId is SupportedChain {
+  const arr = ((shared as any).chains ?? []) as any[]
+  const chainIds = arr.map((c) => (c as any).id as number)
+  return chainIds.includes(chainId)
+}
+
+function getChainById(chainId: number): Chain {
+  const map: Record<number, Chain> = {
+    [mainnet.id]: mainnet,
+    [sepolia.id]: sepolia,
+    [base.id]: base,
+    [baseSepolia.id]: baseSepolia,
+    [arbitrum.id]: arbitrum,
+    [arbitrumSepolia.id]: arbitrumSepolia,
+    [optimism.id]: optimism,
+    [optimismSepolia.id]: optimismSepolia,
+    [polygon.id]: polygon,
+    [soneium.id]: soneium,
+    [sonic.id]: sonic,
+  }
+  if (!isChainIdSupported(chainId)) {
+    throw new UnsupportedChainError(chainId)
+  }
+  return map[chainId]
 }
 
 function isTestnet(chainId: number): boolean {
   const chain = getChainById(chainId)
-  if (!chain) {
-    throw new Error(`Chain not supported: ${chainId}`)
-  }
   return chain.testnet ?? false
 }
 
@@ -137,17 +115,21 @@ function isTokenAddressSupported(address: Address, chainId: number): boolean {
   }
 
   return chainEntry.tokens.some(
-    (token) => token.address.toLowerCase() === address.toLowerCase(),
+    (token: any) =>
+      (token.address as string).toLowerCase() === address.toLowerCase(),
   )
 }
 
 function getSupportedTokens(chainId: number): TokenConfig[] {
-  const chainEntry = getChainEntry(chainId)
-  if (!chainEntry) {
-    throw new Error(`Chain not supported: ${chainId}`)
+  if (!isChainIdSupported(chainId)) {
+    throw new UnsupportedChainError(chainId)
   }
-
-  return chainEntry.tokens
+  const entry = getChainEntry(chainId)
+  return (entry.tokens as any[]).map((t: any) => ({
+    symbol: t.symbol as string,
+    address: t.address as Address,
+    decimals: t.decimals as number,
+  }))
 }
 
 function getDefaultAccountAccessList(onTestnets?: boolean) {
@@ -187,6 +169,3 @@ export {
   getDefaultAccountAccessList,
   resolveTokenAddress,
 }
-
-// Export types for external use
-export type { TokenEntry, ChainContracts, ChainEntry, Registry }

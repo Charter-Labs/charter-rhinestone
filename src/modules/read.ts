@@ -16,7 +16,8 @@ async function getValidators(
   switch (accountType) {
     case 'safe':
     case 'startale':
-    case 'nexus': {
+    case 'nexus':
+    case 'passport': {
       const validators = await publicClient.readContract({
         abi: [
           {
@@ -49,6 +50,9 @@ async function getValidators(
         args: ['0x0000000000000000000000000000000000000001', 100n],
       })
       return (validators as [Address[], Address])[0]
+    }
+    case 'eoa': {
+      return []
     }
     case 'kernel': {
       throw new Error('Kernel not supported')

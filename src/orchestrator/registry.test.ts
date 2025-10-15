@@ -1,4 +1,4 @@
-import { zeroAddress } from 'viem'
+import { type Chain, zeroAddress } from 'viem'
 import { base, baseSepolia, mainnet, sepolia } from 'viem/chains'
 import { describe, expect, test } from 'vitest'
 import {
@@ -88,7 +88,7 @@ describe('Registry', () => {
       const unsupportedChain = {
         id: UNSUPPORTED_CHAIN_ID,
         name: 'Unsupported',
-      } as any
+      } as Chain
       expect(() => getWethAddress(unsupportedChain)).toThrow(
         `Unsupported chain ${UNSUPPORTED_CHAIN_ID}`,
       )
@@ -98,12 +98,14 @@ describe('Registry', () => {
   describe('getChainById', () => {
     test('returns correct chain for supported ID', () => {
       const chain = getChainById(mainnet.id)
-      expect(chain?.id).toBe(mainnet.id)
-      expect(chain?.name).toBe(mainnet.name)
+      expect(chain.id).toBe(mainnet.id)
+      expect(chain.name).toBe(mainnet.name)
     })
 
-    test('returns undefined for unsupported chain', () => {
-      expect(getChainById(UNSUPPORTED_CHAIN_ID)).toBeUndefined()
+    test('throws error for unsupported chain', () => {
+      expect(() => getChainById(UNSUPPORTED_CHAIN_ID)).toThrow(
+        `Unsupported chain ${UNSUPPORTED_CHAIN_ID}`,
+      )
     })
   })
 
@@ -118,7 +120,7 @@ describe('Registry', () => {
 
     test('throws error for unsupported chain', () => {
       expect(() => isTestnet(UNSUPPORTED_CHAIN_ID)).toThrow(
-        `Chain not supported: ${UNSUPPORTED_CHAIN_ID}`,
+        `Unsupported chain ${UNSUPPORTED_CHAIN_ID}`,
       )
     })
   })
@@ -154,7 +156,7 @@ describe('Registry', () => {
 
     test('throws error for unsupported chain', () => {
       expect(() => getSupportedTokens(UNSUPPORTED_CHAIN_ID)).toThrow(
-        `Chain not supported: ${UNSUPPORTED_CHAIN_ID}`,
+        `Unsupported chain ${UNSUPPORTED_CHAIN_ID}`,
       )
     })
   })
@@ -187,7 +189,9 @@ describe('Registry', () => {
     test('throw error for unsupported token', () => {
       expect(() =>
         resolveTokenAddress(TOKEN_SYMBOLS.USDT, baseSepolia.id),
-      ).toThrow(`Unsupported token symbol ${TOKEN_SYMBOLS.USDT}`)
+      ).toThrow(
+        `Unsupported token ${TOKEN_SYMBOLS.USDT} for chain ${baseSepolia.id}`,
+      )
     })
 
     test('throws error for unsupported chain', () => {

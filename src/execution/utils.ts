@@ -7,6 +7,8 @@ import {
   type HashTypedDataParameters,
   type Hex,
   hashMessage,
+  hashTypedData,
+  isAddress,
   type PublicClient,
   publicActions,
   type SignableMessage,
@@ -22,6 +24,7 @@ import {
   type UserOperation,
 } from 'viem/account-abstraction'
 import {
+  EoaSigningMethodNotConfiguredError,
   getAddress,
   getEip7702InitCall,
   getGuardianSmartAccount,
@@ -30,9 +33,12 @@ import {
   getSmartAccount,
   getSmartSessionSmartAccount,
   getTypedDataPackedSignature,
+  is7702,
   toErc6492Signature,
 } from '../accounts'
 import { createTransport, getBundlerClient } from '../accounts/utils'
+import { getIntentExecutor } from '../modules'
+import type { Module } from '../modules/common'
 import {
   getOwnerValidator,
   getSmartSessionValidator,
@@ -42,6 +48,7 @@ import {
   getOwnableValidator,
   getSocialRecoveryValidator,
   getWebAuthnValidator,
+  supportsEip712,
 } from '../modules/validators/core'
 import {
   getOrchestrator,
@@ -49,68 +56,75 @@ import {
   type IntentOp,
   type IntentRoute,
   type SignedIntentOp,
-  type SupportedChain,
 } from '../orchestrator'
 import {
-  DEV_ORCHESTRATOR_URL,
   PROD_ORCHESTRATOR_URL,
   STAGING_ORCHESTRATOR_URL,
 } from '../orchestrator/consts'
 import {
   getChainById,
+  getTokenAddress,
   isTestnet,
   resolveTokenAddress,
 } from '../orchestrator/registry'
 import type {
+  MappedChainTokenAccessList,
+  SettlementLayer,
+  SupportedChain,
+  UnmappedChainTokenAccessList,
+} from '../orchestrator/types'
+import type {
   Call,
+  CalldataInput,
   CallInput,
-  RhinestoneAccountConfig,
+  RhinestoneConfig,
   SignerSet,
+  SourceAssetInput,
   TokenRequest,
+  TokenSymbol,
   Transaction,
+  UserOperationTransaction,
 } from '../types'
-import { getIntentData } from './compact'
-import {
-  OrderPathRequiredForIntentsError,
-  SourceChainsNotAvailableForUserOpFlowError,
-  UserOperationRequiredForSmartSessionsError,
-} from './error'
+import { getCompactTypedData, getPermit2Digest } from './compact'
+import { SignerNotSupportedError } from './error'
+import { getTypedData as getMultiChainOpsTypedData } from './multiChainOps'
+import { getTypedData as getPermit2TypedData } from './permit2'
 
-type TransactionResult =
-  | {
-      type: 'userop'
-      hash: Hex
-      chain: number
-    }
-  | {
-      type: 'intent'
-      id: bigint
-      sourceChains?: number[]
-      targetChain: number
-    }
-
-interface IntentData {
-  type: 'intent'
-  intentRoute: IntentRoute
-}
-
-interface UserOpData {
+interface UserOperationResult {
   type: 'userop'
   hash: Hex
-  userOp: UserOperation
+  chain: number
+}
+
+interface TransactionResult {
+  type: 'intent'
+  id: bigint
+  sourceChains?: number[]
+  targetChain: number
 }
 
 interface PreparedTransactionData {
-  data: IntentData | UserOpData
+  intentRoute: IntentRoute
   transaction: Transaction
 }
 
+interface PreparedUserOperationData {
+  userOperation: UserOperation
+  hash: Hex
+  transaction: UserOperationTransaction
+}
+
 interface SignedTransactionData extends PreparedTransactionData {
+  originSignatures: Hex[]
+  destinationSignature: Hex
+}
+
+interface SignedUserOperationData extends PreparedUserOperationData {
   signature: Hex
 }
 
 async function prepareTransaction(
-  config: RhinestoneAccountConfig,
+  config: RhinestoneConfig,
   transaction: Transaction,
 ): Promise<PreparedTransactionData> {
   const {
@@ -120,87 +134,142 @@ async function prepareTransaction(
     signers,
     sponsored,
     eip7702InitSignature,
+    settlementLayers,
+    sourceAssets,
+    feeAsset,
+    lockFunds,
+    account,
   } = getTransactionParams(transaction)
   const accountAddress = getAddress(config)
 
-  let data: IntentData | UserOpData
-
-  const asUserOp = signers?.type === 'guardians' || signers?.type === 'session'
-  if (asUserOp) {
-    if (sourceChains && sourceChains.length > 0) {
-      throw new SourceChainsNotAvailableForUserOpFlowError()
-    }
-    // Smart sessions require a UserOp flow
-    data = await prepareTransactionAsUserOp(
-      config,
-      targetChain,
-      transaction.calls,
-      signers,
-    )
-  } else {
-    data = await prepareTransactionAsIntent(
-      config,
-      sourceChains,
-      targetChain,
-      transaction.calls,
-      transaction.gasLimit,
-      tokenRequests,
-      accountAddress,
-      sponsored ?? false,
-      eip7702InitSignature,
-    )
+  const isUserOpSigner =
+    signers?.type === 'guardians' || signers?.type === 'session'
+  if (isUserOpSigner) {
+    throw new SignerNotSupportedError()
   }
+  const intentRoute = await prepareTransactionAsIntent(
+    config,
+    sourceChains,
+    targetChain,
+    await resolveCallInputs(
+      transaction.calls,
+      config,
+      targetChain,
+      accountAddress,
+    ),
+    transaction.gasLimit,
+    tokenRequests,
+    accountAddress,
+    sponsored ?? false,
+    eip7702InitSignature,
+    settlementLayers,
+    sourceAssets,
+    feeAsset,
+    lockFunds,
+    account,
+  )
 
   return {
-    data,
+    intentRoute,
     transaction,
   }
 }
 
+async function prepareUserOperation(
+  config: RhinestoneConfig,
+  transaction: UserOperationTransaction,
+): Promise<PreparedUserOperationData> {
+  const chain = transaction.chain
+  const signers = transaction.signers
+  const accountAddress = getAddress(config)
+  const data = await prepareTransactionAsUserOp(
+    config,
+    chain,
+    await resolveCallInputs(transaction.calls, config, chain, accountAddress),
+    signers,
+    transaction.gasLimit,
+  )
+  return {
+    userOperation: data.userOp,
+    hash: data.hash,
+    transaction,
+  }
+}
+
+async function resolveCallInputs(
+  inputs: CallInput[],
+  config: RhinestoneConfig,
+  chain: Chain,
+  accountAddress: Address,
+): Promise<CalldataInput[]> {
+  const resolved: CalldataInput[] = []
+  for (const intent of inputs) {
+    if ('resolve' in intent) {
+      const result = await intent.resolve({ config, chain, accountAddress })
+      if (Array.isArray(result)) {
+        resolved.push(...result)
+      } else if (result) {
+        resolved.push(result)
+      }
+    } else {
+      resolved.push(intent as CalldataInput)
+    }
+  }
+  return resolved
+}
+
 async function signTransaction(
-  config: RhinestoneAccountConfig,
+  config: RhinestoneConfig,
   preparedTransaction: PreparedTransactionData,
 ): Promise<SignedTransactionData> {
   const { targetChain, signers } = getTransactionParams(
     preparedTransaction.transaction,
   )
-  const data = preparedTransaction.data
-  const asUserOp = data.type === 'userop'
-
-  let signature: Hex
-  if (asUserOp) {
-    const chain = targetChain
-    const userOp = data.userOp
-    if (!userOp) {
-      throw new UserOperationRequiredForSmartSessionsError()
-    }
-    // Smart sessions require a UserOp flow
-    signature = await signUserOp(config, chain, signers, userOp)
-  } else {
-    signature = await signIntent(
-      config,
-      targetChain,
-      data.intentRoute.intentOp,
-      signers,
-    )
-  }
+  const intentRoute = preparedTransaction.intentRoute
+  const { originSignatures, destinationSignature } = await signIntent(
+    config,
+    targetChain,
+    intentRoute.intentOp,
+    signers,
+  )
 
   return {
-    data,
+    intentRoute,
     transaction: preparedTransaction.transaction,
+    originSignatures,
+    destinationSignature,
+  }
+}
+
+async function signUserOperation(
+  config: RhinestoneConfig,
+  preparedUserOperation: PreparedUserOperationData,
+): Promise<SignedUserOperationData> {
+  const chain = preparedUserOperation.transaction.chain
+  const userOp = preparedUserOperation.userOperation
+  const signers = preparedUserOperation.transaction.signers
+  // Smart sessions require a UserOp flow
+  const signature = await signUserOp(config, chain, signers, userOp)
+  return {
+    userOperation: preparedUserOperation.userOperation,
+    hash: preparedUserOperation.hash,
+    transaction: preparedUserOperation.transaction,
     signature,
   }
 }
 
 async function signAuthorizations(
-  config: RhinestoneAccountConfig,
+  config: RhinestoneConfig,
   preparedTransaction: PreparedTransactionData,
 ) {
-  return await signAuthorizationsInternal(config, preparedTransaction.data)
+  return await signAuthorizationsInternal(
+    config,
+    preparedTransaction.intentRoute,
+  )
 }
 
 async function signMessage(
-  config: RhinestoneAccountConfig,
+  config: RhinestoneConfig,
   message: SignableMessage,
   chain: Chain,
   signers: SignerSet | undefined,
@@ -230,7 +299,7 @@ async function signTypedData<
   typedData extends TypedData | Record<string, unknown> = TypedData,
   primaryType extends keyof typedData | 'EIP712Domain' = keyof typedData,
 >(
-  config: RhinestoneAccountConfig,
+  config: RhinestoneConfig,
   parameters: HashTypedDataParameters<typedData, primaryType>,
   chain: Chain,
   signers: SignerSet | undefined,
@@ -256,8 +325,8 @@ async function signTypedData<
 }
 
 async function signAuthorizationsInternal(
-  config: RhinestoneAccountConfig,
-  data: IntentData | UserOpData,
+  config: RhinestoneConfig,
+  data: IntentRoute | UserOperation,
 ) {
   const eoa = config.eoa
   if (!eoa) {
@@ -265,9 +334,8 @@ async function signAuthorizationsInternal(
   }
   const accountAddress = getAddress(config)
   const requiredDelegations =
-    data.type === 'intent'
-      ? data.intentRoute.intentOp.signedMetadata.account.requiredDelegations ||
-        {}
+    'intentOp' in data
+      ? data.intentOp.signedMetadata.account.requiredDelegations || {}
       : {}
   const authorizations: SignedAuthorization[] = []
   for (const chainId in requiredDelegations) {
@@ -299,37 +367,36 @@ async function signAuthorizationsInternal(
 }
 
 async function submitTransaction(
-  config: RhinestoneAccountConfig,
+  config: RhinestoneConfig,
   signedTransaction: SignedTransactionData,
   authorizations: SignedAuthorizationList,
+  dryRun: boolean = false,
 ): Promise<TransactionResult> {
-  const { data, transaction, signature } = signedTransaction
+  const { intentRoute, transaction, originSignatures, destinationSignature } =
+    signedTransaction
   const { sourceChains, targetChain } = getTransactionParams(transaction)
+  const intentOp = intentRoute.intentOp
+  return await submitIntent(
+    config,
+    sourceChains,
+    targetChain,
+    intentOp,
+    originSignatures,
+    destinationSignature,
+    authorizations,
+    dryRun,
+  )
+}
 
-  const asUserOp = data.type === 'userop'
-
-  if (asUserOp) {
-    const chain = targetChain
-    const userOp = data.userOp
-    if (!userOp) {
-      throw new UserOperationRequiredForSmartSessionsError()
-    }
-    // Smart sessions require a UserOp flow
-    return await submitUserOp(config, chain, userOp, signature)
-  } else {
-    const intentOp = data.intentRoute.intentOp
-    if (!intentOp) {
-      throw new OrderPathRequiredForIntentsError()
-    }
-    return await submitIntent(
-      config,
-      sourceChains,
-      targetChain,
-      intentOp,
-      signature,
-      authorizations,
-    )
-  }
+async function submitUserOperation(
+  config: RhinestoneConfig,
+  signedUserOperation: SignedUserOperationData,
+) {
+  const chain = signedUserOperation.transaction.chain
+  const userOp = signedUserOperation.userOperation
+  const signature = signedUserOperation.signature
+  // Smart sessions require a UserOp flow
+  return await submitUserOp(config, chain, userOp, signature)
 }
 
 function getTransactionParams(transaction: Transaction) {
@@ -341,17 +408,19 @@ function getTransactionParams(transaction: Transaction) {
   const signers = transaction.signers
   const eip7702InitSignature = transaction.eip7702InitSignature
   const sponsored = transaction.sponsored
+  const gasLimit = transaction.gasLimit
+  const settlementLayers = transaction.settlementLayers
+  const sourceAssets = transaction.sourceAssets
+  const feeAsset = transaction.feeAsset
+  const lockFunds = transaction.lockFunds
+  const account = transaction.experimental_accountOverride
 
-  // Across requires passing some value to repay the solvers
-  const tokenRequests =
-    !initialTokenRequests || initialTokenRequests.length === 0
-      ? [
-          {
-            address: zeroAddress,
-            amount: 1n,
-          },
-        ]
-      : initialTokenRequests
+  const tokenRequests = getTokenRequests(
+    sourceChains || [],
+    targetChain,
+    initialTokenRequests,
+    settlementLayers,
+  )
 
   return {
     sourceChains,
@@ -360,14 +429,50 @@ function getTransactionParams(transaction: Transaction) {
     signers,
     sponsored,
     eip7702InitSignature,
+    gasLimit,
+    settlementLayers,
+    sourceAssets,
+    feeAsset,
+    lockFunds,
+    account,
   }
 }
 
+function getTokenRequests(
+  sourceChains: Chain[],
+  targetChain: Chain,
+  initialTokenRequests: TokenRequest[] | undefined,
+  settlementLayers: SettlementLayer[] | undefined,
+) {
+  if (initialTokenRequests) {
+    validateTokenSymbols(
+      targetChain,
+      initialTokenRequests.map((tokenRequest) => tokenRequest.address),
+    )
+  }
+  // Across requires passing some value to repay the solvers
+  const defaultTokenRequest = {
+    address: zeroAddress,
+    amount: 1n,
+  }
+  const isSameChain =
+    (settlementLayers?.length === 1 && settlementLayers[0] === 'SAME_CHAIN') ||
+    (sourceChains.length === 1 && sourceChains[0].id === targetChain.id)
+  const tokenRequests =
+    !initialTokenRequests || initialTokenRequests.length === 0
+      ? isSameChain
+        ? []
+        : [defaultTokenRequest]
+      : initialTokenRequests
+  return tokenRequests
+}
+
 async function prepareTransactionAsUserOp(
-  config: RhinestoneAccountConfig,
+  config: RhinestoneConfig,
   chain: Chain,
-  callInputs: CallInput[],
+  callInputs: CalldataInput[],
   signers: SignerSet | undefined,
+  gasLimit: bigint | undefined,
 ) {
   const publicClient = createPublicClient({
     chain,
@@ -387,9 +492,9 @@ async function prepareTransactionAsUserOp(
   const userOp = await bundlerClient.prepareUserOperation({
     account: validatorAccount,
     calls,
+    callGasLimit: gasLimit,
   })
   return {
-    type: 'userop',
     userOp,
     hash: getUserOperationHash({
       userOperation: userOp,
@@ -397,33 +502,48 @@ async function prepareTransactionAsUserOp(
       entryPointAddress: entryPoint07Address,
       entryPointVersion: '0.7',
     }),
-  } as UserOpData
+  }
 }
 
 async function prepareTransactionAsIntent(
-  config: RhinestoneAccountConfig,
+  config: RhinestoneConfig,
   sourceChains: Chain[] | undefined,
   targetChain: Chain,
-  callInputs: CallInput[],
+  callInputs: CalldataInput[],
   gasLimit: bigint | undefined,
   tokenRequests: TokenRequest[],
   accountAddress: Address,
   isSponsored: boolean,
-  eip7702InitSignature?: Hex,
+  eip7702InitSignature: Hex | undefined,
+  settlementLayers: SettlementLayer[] | undefined,
+  sourceAssets: SourceAssetInput | undefined,
+  feeAsset: Address | TokenSymbol | undefined,
+  lockFunds?: boolean,
+  account?: {
+    setupOps?: {
+      to: Address
+      data: Hex
+    }[]
+  },
 ) {
   const calls = parseCalls(callInputs, targetChain.id)
-  const accountAccessList =
-    sourceChains && sourceChains.length > 0
-      ? {
-          chainIds: sourceChains.map((chain) => chain.id as SupportedChain),
-        }
-      : undefined
+  const accountAccessList = createAccountAccessList(sourceChains, sourceAssets)
 
   const { setupOps, delegations } = await getSetupOperationsAndDelegations(
     config,
     accountAddress,
     eip7702InitSignature,
   )
+
+  const getAccountType = (config: RhinestoneConfig): 'EOA' | 'ERC7579' => {
+    if (config.account?.type === 'eoa') {
+      return 'EOA'
+    } else {
+      return 'ERC7579'
+    }
+  }
+
+  const accountType = getAccountType(config)
 
   const metaIntent: IntentInput = {
     destinationChainId: targetChain.id,
@@ -433,51 +553,258 @@ async function prepareTransactionAsIntent(
     })),
     account: {
       address: accountAddress,
-      accountType: 'ERC7579',
-      setupOps,
+      accountType: accountType,
+      setupOps: account?.setupOps ?? setupOps,
       delegations,
     },
-    destinationExecutions: calls,
+    destinationExecutions: calls.map((call) => ({
+      to: call.to,
+      value: call.value.toString(),
+      data: call.data,
+    })),
     destinationGasUnits: gasLimit,
     accountAccessList,
     options: {
-      topupCompact: false,
+      topupCompact: lockFunds ?? false,
+      feeToken: feeAsset,
       sponsorSettings: {
         gasSponsored: isSponsored,
         bridgeFeesSponsored: isSponsored,
         swapFeesSponsored: isSponsored,
       },
+      settlementLayers,
     },
   }
 
   const orchestrator = getOrchestratorByChain(
     targetChain.id,
-    config.rhinestoneApiKey,
-    config.useDev,
+    config.apiKey,
+    config.endpointUrl,
   )
   const intentRoute = await orchestrator.getIntentRoute(metaIntent)
-
-  return {
-    type: 'intent',
-    intentRoute,
-  } as IntentData
+  return intentRoute
 }
 
 async function signIntent(
-  config: RhinestoneAccountConfig,
+  config: RhinestoneConfig,
   targetChain: Chain,
   intentOp: IntentOp,
   signers?: SignerSet,
 ) {
+  if (config.account?.type === 'eoa') {
+    const originSignatures: Hex[] = []
+    for (const element of intentOp.elements) {
+      let digest: Hex | undefined
+      if (config.eoa?.signTypedData) {
+        const typedData = getPermit2TypedData(
+          element,
+          BigInt(intentOp.nonce),
+          BigInt(intentOp.expires),
+        )
+        originSignatures.push(await config.eoa.signTypedData(typedData))
+      } else if (config.eoa?.sign) {
+        digest = getPermit2Digest(
+          element,
+          BigInt(intentOp.nonce),
+          BigInt(intentOp.expires),
+        )
+        originSignatures.push(await (config.eoa as any).sign({ hash: digest }))
+      } else if (config.eoa?.signMessage) {
+        digest = getPermit2Digest(
+          element,
+          BigInt(intentOp.nonce),
+          BigInt(intentOp.expires),
+        )
+        originSignatures.push(
+          await (config.eoa as any).signMessage({
+            message: { raw: digest },
+          }),
+        )
+      } else {
+        throw new EoaSigningMethodNotConfiguredError(
+          'signTypedData, sign, or signMessage',
+        )
+      }
+    }
+    return {
+      originSignatures,
+      destinationSignature: originSignatures[0],
+    }
+  }
+
   const validator = getValidator(config, signers)
   if (!validator) {
     throw new Error('Validator not available')
   }
   const ownerValidator = getOwnerValidator(config)
   const isRoot = validator.address === ownerValidator.address
+  const signatures = await getIntentSignature(
+    config,
+    intentOp,
+    signers,
+    targetChain,
+    validator,
+    isRoot,
+  )
+  return signatures
+}
 
-  const typedData = getIntentData(intentOp)
-  const signature = await getTypedDataPackedSignature(
+async function getIntentSignature(
+  config: RhinestoneConfig,
+  intentOp: IntentOp,
+  signers: SignerSet | undefined,
+  targetChain: Chain,
+  validator: Module,
+  isRoot: boolean,
+) {
+  const withJitFlow = intentOp.elements.some(
+    (element) => element.mandate.qualifier.settlementContext?.usingJIT,
+  )
+  const withMultiChainOps = intentOp.elements.some(
+    (element) =>
+      element.mandate.qualifier.settlementContext.settlementLayer ===
+      'INTENT_EXECUTOR',
+  )
+  if (withMultiChainOps) {
+    const signature = await getMultiChainOpsSignature(
+      config,
+      intentOp,
+      signers,
+      targetChain,
+      validator,
+      isRoot,
+    )
+    return {
+      originSignatures: Array(intentOp.elements.length).fill(signature),
+      destinationSignature: signature,
+    }
+  }
+
+  if (withJitFlow) {
+    return await getPermit2Signatures(
+      config,
+      intentOp,
+      signers,
+      targetChain,
+      validator,
+      isRoot,
+    )
+  }
+  const signature = await getCompactSignature(
+    config,
+    intentOp,
+    signers,
+    targetChain,
+    validator,
+    isRoot,
+  )
+  return {
+    originSignatures: Array(intentOp.elements.length).fill(signature),
+    destinationSignature: signature,
+  }
+}
+
+async function getMultiChainOpsSignature(
+  config: RhinestoneConfig,
+  intentOp: IntentOp,
+  signers: SignerSet | undefined,
+  targetChain: Chain,
+  validator: Module,
+  isRoot: boolean,
+) {
+  const address = getAddress(config)
+  const intentExecutor = getIntentExecutor(config)
+  const typedData = getMultiChainOpsTypedData(
+    address,
+    intentExecutor.address,
+    intentOp,
+  )
+  const signature = await signIntentTypedData(
+    config,
+    signers,
+    targetChain,
+    validator,
+    isRoot,
+    typedData,
+  )
+  return signature
+}
+
+async function getPermit2Signatures(
+  config: RhinestoneConfig,
+  intentOp: IntentOp,
+  signers: SignerSet | undefined,
+  targetChain: Chain,
+  validator: Module,
+  isRoot: boolean,
+) {
+  const originSignatures: Hex[] = []
+  for (const element of intentOp.elements) {
+    const typedData = getPermit2TypedData(
+      element,
+      BigInt(intentOp.nonce),
+      BigInt(intentOp.expires),
+    )
+    const signature = await signIntentTypedData(
+      config,
+      signers,
+      targetChain,
+      validator,
+      isRoot,
+      typedData,
+    )
+    originSignatures.push(signature)
+  }
+  return {
+    originSignatures,
+    destinationSignature: originSignatures[0],
+  }
+}
+
+async function getCompactSignature(
+  config: RhinestoneConfig,
+  intentOp: IntentOp,
+  signers: SignerSet | undefined,
+  targetChain: Chain,
+  validator: Module,
+  isRoot: boolean,
+) {
+  const typedData = getCompactTypedData(intentOp)
+  return await signIntentTypedData(
+    config,
+    signers,
+    targetChain,
+    validator,
+    isRoot,
+    typedData,
+  )
+}
+
+async function signIntentTypedData<
+  typedData extends TypedData | Record<string, unknown> = TypedData,
+  primaryType extends keyof typedData | 'EIP712Domain' = keyof typedData,
+>(
+  config: RhinestoneConfig,
+  signers: SignerSet | undefined,
+  targetChain: Chain,
+  validator: Module,
+  isRoot: boolean,
+  parameters: HashTypedDataParameters<typedData, primaryType>,
+) {
+  if (supportsEip712(validator)) {
+    return await getTypedDataPackedSignature(
+      config,
+      signers,
+      targetChain,
+      {
+        address: validator.address,
+        isRoot,
+      },
+      parameters,
+    )
+  }
+  const hash = hashTypedData(parameters)
+  return await getPackedSignature(
     config,
     signers,
     targetChain,
@@ -485,13 +812,12 @@ async function signIntent(
       address: validator.address,
       isRoot,
     },
-    typedData,
+    hash,
   )
-  return signature
 }
 
 async function signUserOp(
-  config: RhinestoneAccountConfig,
+  config: RhinestoneConfig,
   chain: Chain,
   signers: SignerSet | undefined,
   userOp: UserOperation,
@@ -519,7 +845,7 @@ async function signUserOp(
 }
 
 async function submitUserOp(
-  config: RhinestoneAccountConfig,
+  config: RhinestoneConfig,
   chain: Chain,
   userOp: UserOperation,
   signature: Hex,
@@ -560,53 +886,56 @@ async function submitUserOp(
     type: 'userop',
     hash,
     chain: chain.id,
-  } as TransactionResult
+  } as UserOperationResult
 }
 
 async function submitIntent(
-  config: RhinestoneAccountConfig,
+  config: RhinestoneConfig,
   sourceChains: Chain[] | undefined,
   targetChain: Chain,
   intentOp: IntentOp,
-  signature: Hex,
+  originSignatures: Hex[],
+  destinationSignature: Hex,
   authorizations: SignedAuthorizationList,
+  dryRun: boolean,
 ) {
   return submitIntentInternal(
     config,
     sourceChains,
     targetChain,
     intentOp,
-    signature,
+    originSignatures,
+    destinationSignature,
     authorizations,
+    dryRun,
   )
 }
 
 function getOrchestratorByChain(
   chainId: number,
   apiKey: string | undefined,
-  useDev: boolean | undefined,
+  orchestratorUrl?: string,
 ) {
-  const orchestratorUrl =
-    (useDev ?? false)
-      ? DEV_ORCHESTRATOR_URL
-      : isTestnet(chainId)
-        ? STAGING_ORCHESTRATOR_URL
-        : PROD_ORCHESTRATOR_URL
-  return getOrchestrator(apiKey, orchestratorUrl)
+  if (orchestratorUrl) {
+    return getOrchestrator(apiKey, orchestratorUrl)
+  }
+
+  const defaultOrchestratorUrl = isTestnet(chainId)
+    ? STAGING_ORCHESTRATOR_URL
+    : PROD_ORCHESTRATOR_URL
+  return getOrchestrator(apiKey, defaultOrchestratorUrl)
 }
 
-async function submitIntentInternal(
-  config: RhinestoneAccountConfig,
-  sourceChains: Chain[] | undefined,
-  targetChain: Chain,
+function createSignedIntentOp(
   intentOp: IntentOp,
-  signature: Hex,
+  originSignatures: Hex[],
+  destinationSignature: Hex,
   authorizations: SignedAuthorizationList,
-) {
-  const signedIntentOp: SignedIntentOp = {
+): SignedIntentOp {
+  return {
     ...intentOp,
-    originSignatures: Array(intentOp.elements.length).fill(signature),
-    destinationSignature: signature,
+    originSignatures,
+    destinationSignature,
     signedAuthorizations:
       authorizations.length > 0
         ? authorizations.map((authorization) => ({
@@ -619,12 +948,30 @@ async function submitIntentInternal(
           }))
         : undefined,
   }
+}
+
+async function submitIntentInternal(
+  config: RhinestoneConfig,
+  sourceChains: Chain[] | undefined,
+  targetChain: Chain,
+  intentOp: IntentOp,
+  originSignatures: Hex[],
+  destinationSignature: Hex,
+  authorizations: SignedAuthorizationList,
+  dryRun: boolean,
+) {
+  const signedIntentOp = createSignedIntentOp(
+    intentOp,
+    originSignatures,
+    destinationSignature,
+    authorizations,
+  )
   const orchestrator = getOrchestratorByChain(
     targetChain.id,
-    config.rhinestoneApiKey,
-    config.useDev,
+    config.apiKey,
+    config.endpointUrl,
   )
-  const intentResults = await orchestrator.submitIntent(signedIntentOp)
+  const intentResults = await orchestrator.submitIntent(signedIntentOp, dryRun)
   return {
     type: 'intent',
     id: BigInt(intentResults.result.id),
@@ -634,13 +981,13 @@ async function submitIntentInternal(
 }
 
 async function getValidatorAccount(
-  config: RhinestoneAccountConfig,
+  config: RhinestoneConfig,
   signers: SignerSet | undefined,
   publicClient: PublicClient,
   chain: Chain,
 ) {
   if (!signers) {
-    return undefined
+    return getSmartAccount(config, publicClient, chain)
   }
 
   // Owners
@@ -669,7 +1016,7 @@ async function getValidatorAccount(
 }
 
 function getValidator(
-  config: RhinestoneAccountConfig,
+  config: RhinestoneConfig,
   signers: SignerSet | undefined,
 ) {
   if (!signers) {
@@ -717,7 +1064,7 @@ function getValidator(
   return undefined
 }
 
-function parseCalls(calls: CallInput[], chainId: number): Call[] {
+function parseCalls(calls: CalldataInput[], chainId: number): Call[] {
   return calls.map((call) => ({
     data: call.data ?? '0x',
     value: call.value ?? 0n,
@@ -725,14 +1072,35 @@ function parseCalls(calls: CallInput[], chainId: number): Call[] {
   }))
 }
 
+function createAccountAccessList(
+  sourceChains: Chain[] | undefined,
+  sourceAssets: SourceAssetInput | undefined,
+): MappedChainTokenAccessList | UnmappedChainTokenAccessList | undefined {
+  if (!sourceChains && !sourceAssets) return undefined
+  const chainIds = sourceChains?.map((chain) => chain.id as SupportedChain)
+  if (!sourceAssets) {
+    return { chainIds }
+  }
+  if (Array.isArray(sourceAssets)) {
+    return chainIds
+      ? { chainIds, tokens: sourceAssets }
+      : { tokens: sourceAssets }
+  }
+  return { chainTokens: sourceAssets }
+}
+
 async function getSetupOperationsAndDelegations(
-  config: RhinestoneAccountConfig,
+  config: RhinestoneConfig,
   accountAddress: Address,
   eip7702InitSignature?: Hex,
 ) {
   const initCode = getInitCode(config)
 
-  if (config.eoa) {
+  if (config.account?.type === 'eoa') {
+    return {
+      setupOps: [],
+    }
+  } else if (is7702(config)) {
     // EIP-7702 initialization is only needed for EOA accounts
     if (!eip7702InitSignature || eip7702InitSignature === '0x') {
       throw new Error(
@@ -774,6 +1142,30 @@ async function getSetupOperationsAndDelegations(
   }
 }
 
+function validateTokenSymbols(
+  chain: Chain,
+  tokenAddressOrSymbols: (Address | TokenSymbol)[],
+) {
+  function validateTokenSymbol(
+    chain: Chain,
+    addressOrSymbol: Address | TokenSymbol,
+  ) {
+    // Address
+    if (isAddress(addressOrSymbol, { strict: false })) {
+      return true
+    }
+    // Token symbol
+    const address = getTokenAddress(addressOrSymbol, chain.id as any)
+    return isAddress(address, { strict: false })
+  }
+
+  for (const addressOrSymbol of tokenAddressOrSymbols) {
+    if (!validateTokenSymbol(chain, addressOrSymbol)) {
+      throw new Error(`Invalid token symbol: ${addressOrSymbol}`)
+    }
+  }
+}
+
 export {
   prepareTransaction,
   signTransaction,
@@ -782,16 +1174,24 @@ export {
   signMessage,
   signTypedData,
   submitTransaction,
+  prepareUserOperation,
+  signUserOperation,
+  submitUserOperation,
   getOrchestratorByChain,
   signIntent,
   prepareTransactionAsIntent,
   submitIntentInternal,
   getValidatorAccount,
   parseCalls,
+  getTokenRequests,
+  resolveCallInputs,
 }
 export type {
-  IntentData,
+  IntentRoute,
   TransactionResult,
   PreparedTransactionData,
+  PreparedUserOperationData,
   SignedTransactionData,
+  SignedUserOperationData,
+  UserOperationResult,
 }

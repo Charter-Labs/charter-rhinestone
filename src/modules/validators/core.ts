@@ -11,6 +11,7 @@ import {
   toHex,
 } from 'viem'
 
+import { OwnersFieldRequiredError } from '../../accounts/error'
 import type {
   OwnableValidatorConfig,
   OwnerSet,
@@ -32,13 +33,21 @@ interface WebauthnCredential {
 }
 
 const OWNABLE_VALIDATOR_ADDRESS: Address =
-  '0x000000000013fdB5234E4E3162a810F54d9f7E98'
+  '0x000000000013fdb5234e4e3162a810f54d9f7e98'
 const WEBAUTHN_VALIDATOR_ADDRESS: Address =
-  '0x0000000000578c4cB0e472a5462da43C495C3F33'
+  '0x0000000000578c4cb0e472a5462da43c495c3f33'
 const SOCIAL_RECOVERY_VALIDATOR_ADDRESS: Address =
-  '0xA04D053b3C8021e8D5bF641816c42dAA75D8b597'
+  '0xa04d053b3c8021e8d5bf641816c42daa75d8b597'
 const MULTI_FACTOR_VALIDATOR_ADDRESS: Address =
-  '0xf6bDf42c9BE18cEcA5C06c42A43DAf7FBbe7896b'
+  '0xf6bdf42c9be18ceca5c06c42a43daf7fbbe7896b'
+
+// Legacy
+const OWNABLE_V0_VALIDATOR_ADDRESS: Address =
+  '0x2483da3a338895199e5e538530213157e931bf06'
+const OWNABLE_BETA_VALIDATOR_ADDRESS: Address =
+  '0x0000000000e9e6e96bcaa3c113187cdb7e38aed9'
+const WEBAUTHN_V0_VALIDATOR_ADDRESS: Address =
+  '0x0000000000578c4cb0e472a5462da43c495c3f33'
 
 const ECDSA_MOCK_SIGNATURE =
   '0x81d4b4981670cb18f99f0b4a66446df1bf5b204d24cfcb659bf38ba27a4359b5711649ec2423c5e1247245eba2964679b6a1dbb85c992ae40b9b00c6935b02ff1b'
@@ -46,6 +55,9 @@ const WEBAUTHN_MOCK_SIGNATURE =
   '0x0000000000000000000000000000000000000000000000000000000000000060000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000a00000000000000000000000000000000000000000000000000000000000000001b9b86eb98fda3ed4d797d9e690588dfadf17b329a76a47cec935bebf92d7ddc80000000000000000000000000000000000000000000000000000000000000001000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000c00000000000000000000000000000000000000000000000000000000000000120000000000000000000000000000000000000000000000000000000000000001700000000000000000000000000000000000000000000000000000000000000019b2e9410bb6850f9f660a03d609d5a844fb96bcdc87a15139b03ee22c70f469100d2b865a215c3bf786387064effa8fcedcb1d625b5148f8a1236d5e3ff11acf000000000000000000000000000000000000000000000000000000000000002549960de5880e8c687434170f6476605b8fe4aeb9a28632c7995cf3ba831d9763050000000100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000867b2274797065223a22776562617574686e2e676574222c226368616c6c656e6765223a22396a4546696a75684557724d34534f572d7443684a625545484550343456636a634a2d42716f3166544d38222c226f726967696e223a22687474703a2f2f6c6f63616c686f73743a38303830222c2263726f73734f726967696e223a66616c73657d0000000000000000000000000000000000000000000000000000'
 
 function getOwnerValidator(config: RhinestoneAccountConfig) {
+  if (!config.owners) {
+    throw new OwnersFieldRequiredError()
+  }
   return getValidator(config.owners)
 }
 
@@ -106,6 +118,7 @@ function getValidator(owners: OwnerSet) {
       return getOwnableValidator(
         owners.threshold ?? 1,
         owners.accounts.map((account) => account.address),
+        owners.module,
       )
     case 'passkey':
       return getWebAuthnValidator(
@@ -121,9 +134,13 @@ function getValidator(owners: OwnerSet) {
   }
 }
 
-function getOwnableValidator(threshold: number, owners: Address[]): Module {
+function getOwnableValidator(
+  threshold: number,
+  owners: Address[],
+  address?: Address,
+): Module {
   return {
-    address: OWNABLE_VALIDATOR_ADDRESS,
+    address: address ?? OWNABLE_VALIDATOR_ADDRESS,
     initData: encodeAbiParameters(
       [
         { name: 'threshold', type: 'uint256' },
@@ -143,6 +160,7 @@ function getOwnableValidator(threshold: number, owners: Address[]): Module {
 function getWebAuthnValidator(
   threshold: number,
   webAuthnCredentials: WebauthnCredential[],
+  address?: Address,
 ): Module {
   function getPublicKey(webAuthnCredential: WebauthnCredential): PublicKey {
     if (
@@ -167,7 +185,7 @@ function getWebAuthnValidator(
   const publicKeys = webAuthnCredentials.map(getPublicKey)
 
   return {
-    address: WEBAUTHN_VALIDATOR_ADDRESS,
+    address: address ?? WEBAUTHN_VALIDATOR_ADDRESS,
     initData: encodeAbiParameters(
       [
         { name: 'threshold', type: 'uint256' },
@@ -298,10 +316,21 @@ function parsePublicKey(publicKey: Hex | Uint8Array): PublicKey {
   }
 }
 
+function supportsEip712(validator: Module) {
+  switch (validator.address.toLowerCase()) {
+    case OWNABLE_BETA_VALIDATOR_ADDRESS: // Ownable Validator V1-beta
+    case OWNABLE_V0_VALIDATOR_ADDRESS: // Ownable Validator V0
+      return false
+    default:
+      return true
+  }
+}
+
 export {
   OWNABLE_VALIDATOR_ADDRESS,
   WEBAUTHN_VALIDATOR_ADDRESS,
   MULTI_FACTOR_VALIDATOR_ADDRESS,
+  WEBAUTHN_V0_VALIDATOR_ADDRESS,
   getOwnerValidator,
   getOwnableValidator,
   getWebAuthnValidator,
@@ -309,5 +338,6 @@ export {
   getSocialRecoveryValidator,
   getValidator,
   getMockSignature,
+  supportsEip712,
 }
 export type { WebauthnCredential }
