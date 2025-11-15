@@ -4,6 +4,7 @@ import {
   concat,
   createPublicClient,
   createWalletClient,
+  encodePacked,
   type HashTypedDataParameters,
   type Hex,
   hashMessage,
@@ -15,6 +16,7 @@ import {
   type SignedAuthorization,
   type SignedAuthorizationList,
   type TypedData,
+  type TypedDataDomain,
   toHex,
   zeroAddress,
 } from 'viem'
@@ -23,9 +25,11 @@ import {
   getUserOperationHash,
   type UserOperation,
 } from 'viem/account-abstraction'
+import { wrapTypedDataSignature } from 'viem/experimental/erc7739'
 import {
   EoaSigningMethodNotConfiguredError,
   getAddress,
+  getEip712Domain,
   getEip7702InitCall,
   getGuardianSmartAccount,
   getInitCode,
@@ -36,16 +40,20 @@ import {
   is7702,
   toErc6492Signature,
 } from '../accounts'
-import { createTransport, getBundlerClient } from '../accounts/utils'
+import {
+  createTransport,
+  getBundlerClient,
+  type ValidatorConfig,
+} from '../accounts/utils'
 import { getIntentExecutor } from '../modules'
 import type { Module } from '../modules/common'
 import {
   getOwnerValidator,
+  getPermissionId,
   getSmartSessionValidator,
 } from '../modules/validators'
 import {
   getMultiFactorValidator,
-  getOwnableValidator,
   getSocialRecoveryValidator,
   getWebAuthnValidator,
   supportsEip712,
@@ -67,11 +75,13 @@ import {
   isTestnet,
   resolveTokenAddress,
 } from '../orchestrator/registry'
-import type {
-  MappedChainTokenAccessList,
-  SettlementLayer,
-  SupportedChain,
-  UnmappedChainTokenAccessList,
+import {
+  type Account,
+  FundingMethod,
+  type MappedChainTokenAccessList,
+  type SettlementLayer,
+  type SupportedChain,
+  type UnmappedChainTokenAccessList,
 } from '../orchestrator/types'
 import type {
   Call,
@@ -87,8 +97,8 @@ import type {
 } from '../types'
 import { getCompactTypedData, getPermit2Digest } from './compact'
 import { SignerNotSupportedError } from './error'
-import { getTypedData as getMultiChainOpsTypedData } from './multiChainOps'
 import { getTypedData as getPermit2TypedData } from './permit2'
+import { getTypedData as getSingleChainOpsTypedData } from './singleChainOps'
 
 interface UserOperationResult {
   type: 'userop'
@@ -139,6 +149,7 @@ async function prepareTransaction(
     feeAsset,
     lockFunds,
     account,
+    recipient,
   } = getTransactionParams(transaction)
   const accountAddress = getAddress(config)
 
@@ -159,6 +170,7 @@ async function prepareTransaction(
     ),
     transaction.gasLimit,
     tokenRequests,
+    recipient,
     accountAddress,
     sponsored ?? false,
     eip7702InitSignature,
@@ -311,6 +323,19 @@ async function signTypedData<
   const ownerValidator = getOwnerValidator(config)
   const isRoot = validator.address === ownerValidator.address
 
+  if (signers?.type === 'session') {
+    return await signTypedDataWithSession(
+      config,
+      chain,
+      {
+        address: validator.address,
+        isRoot,
+      },
+      signers,
+      parameters,
+    )
+  }
+
   const signature = await getTypedDataPackedSignature(
     config,
     signers,
@@ -320,6 +345,65 @@ async function signTypedData<
       isRoot,
     },
     parameters,
+  )
+  return await toErc6492Signature(config, signature, chain)
+}
+
+async function signTypedDataWithSession<
+  typedData extends TypedData | Record<string, unknown> = TypedData,
+  primaryType extends keyof typedData | 'EIP712Domain' = keyof typedData,
+>(
+  config: RhinestoneConfig,
+  chain: Chain,
+  validator: ValidatorConfig,
+  signers: SignerSet & { type: 'session' },
+  parameters: HashTypedDataParameters<typedData, primaryType>,
+) {
+  const { name, version, chainId, verifyingContract, salt } = getEip712Domain(
+    config,
+    chain,
+  )
+  const signature = await getTypedDataPackedSignature(
+    config,
+    signers,
+    chain,
+    validator,
+    {
+      domain: parameters.domain as TypedDataDomain,
+      primaryType: 'TypedDataSign',
+      types: {
+        ...(parameters.types as TypedData),
+        TypedDataSign: [
+          { name: 'contents', type: parameters.primaryType },
+          { name: 'name', type: 'string' },
+          { name: 'version', type: 'string' },
+          { name: 'chainId', type: 'uint256' },
+          { name: 'verifyingContract', type: 'address' },
+          { name: 'salt', type: 'bytes32' },
+        ],
+      },
+      message: {
+        contents: parameters.message as Record<string, unknown>,
+        name,
+        version,
+        chainId,
+        verifyingContract,
+        salt,
+      },
+    },
+    (signature) => {
+      const erc7739Signature = wrapTypedDataSignature({
+        domain: parameters.domain as TypedDataDomain,
+        primaryType: parameters.primaryType,
+        types: parameters.types as TypedData,
+        message: parameters.message as Record<string, unknown>,
+        signature,
+      })
+      return encodePacked(
+        ['bytes32', 'bytes'],
+        [getPermissionId(signers.session), erc7739Signature],
+      )
+    },
   )
   return await toErc6492Signature(config, signature, chain)
 }
@@ -414,6 +498,7 @@ function getTransactionParams(transaction: Transaction) {
   const feeAsset = transaction.feeAsset
   const lockFunds = transaction.lockFunds
   const account = transaction.experimental_accountOverride
+  const recipient = transaction.recipient
 
   const tokenRequests = getTokenRequests(
     sourceChains || [],
@@ -435,6 +520,7 @@ function getTransactionParams(transaction: Transaction) {
     feeAsset,
     lockFunds,
     account,
+    recipient,
   }
 }
 
@@ -512,6 +598,7 @@ async function prepareTransactionAsIntent(
   callInputs: CalldataInput[],
   gasLimit: bigint | undefined,
   tokenRequests: TokenRequest[],
+  recipient: Account | undefined,
   accountAddress: Address,
   isSponsored: boolean,
   eip7702InitSignature: Hex | undefined,
@@ -547,10 +634,11 @@ async function prepareTransactionAsIntent(
 
   const metaIntent: IntentInput = {
     destinationChainId: targetChain.id,
-    tokenTransfers: tokenRequests.map((tokenRequest) => ({
+    tokenRequests: tokenRequests.map((tokenRequest) => ({
       tokenAddress: resolveTokenAddress(tokenRequest.address, targetChain.id),
       amount: tokenRequest.amount,
     })),
+    recipient,
     account: {
       address: accountAddress,
       accountType: accountType,
@@ -626,9 +714,10 @@ async function signIntent(
         )
       }
     }
+    const destinationSignature = originSignatures.at(-1) as Hex
     return {
       originSignatures,
-      destinationSignature: originSignatures[0],
+      destinationSignature,
     }
   }
 
@@ -646,7 +735,10 @@ async function signIntent(
     validator,
     isRoot,
   )
-  return signatures
+  return {
+    originSignatures: signatures.originSignatures,
+    destinationSignature: signatures.destinationSignature,
+  }
 }
 
 async function getIntentSignature(
@@ -657,16 +749,18 @@ async function getIntentSignature(
   validator: Module,
   isRoot: boolean,
 ) {
-  const withJitFlow = intentOp.elements.some(
-    (element) => element.mandate.qualifier.settlementContext?.usingJIT,
+  const withPermit2 = intentOp.elements.some(
+    (element) =>
+      element.mandate.qualifier.settlementContext?.fundingMethod ===
+      FundingMethod.PERMIT2,
   )
-  const withMultiChainOps = intentOp.elements.some(
+  const withIntentExecutorOps = intentOp.elements.some(
     (element) =>
       element.mandate.qualifier.settlementContext.settlementLayer ===
       'INTENT_EXECUTOR',
   )
-  if (withMultiChainOps) {
-    const signature = await getMultiChainOpsSignature(
+  if (withIntentExecutorOps) {
+    const signature = await getSingleChainOpsSignature(
       config,
       intentOp,
       signers,
@@ -674,13 +768,10 @@ async function getIntentSignature(
       validator,
       isRoot,
     )
-    return {
-      originSignatures: Array(intentOp.elements.length).fill(signature),
-      destinationSignature: signature,
-    }
+    return signature
   }
 
-  if (withJitFlow) {
+  if (withPermit2) {
     return await getPermit2Signatures(
       config,
       intentOp,
@@ -704,7 +795,7 @@ async function getIntentSignature(
   }
 }
 
-async function getMultiChainOpsSignature(
+async function getSingleChainOpsSignature(
   config: RhinestoneConfig,
   intentOp: IntentOp,
   signers: SignerSet | undefined,
@@ -714,20 +805,29 @@ async function getMultiChainOpsSignature(
 ) {
   const address = getAddress(config)
   const intentExecutor = getIntentExecutor(config)
-  const typedData = getMultiChainOpsTypedData(
-    address,
-    intentExecutor.address,
-    intentOp,
-  )
-  const signature = await signIntentTypedData(
-    config,
-    signers,
-    targetChain,
-    validator,
-    isRoot,
-    typedData,
-  )
-  return signature
+  const originSignatures: Hex[] = []
+  for (const element of intentOp.elements) {
+    const typedData = getSingleChainOpsTypedData(
+      address,
+      intentExecutor.address,
+      element,
+      BigInt(intentOp.nonce),
+    )
+    const signature = await signIntentTypedData(
+      config,
+      signers,
+      targetChain,
+      validator,
+      isRoot,
+      typedData,
+    )
+    originSignatures.push(signature)
+  }
+  const destinationSignature = originSignatures.at(-1) as Hex
+  return {
+    originSignatures,
+    destinationSignature,
+  }
 }
 
 async function getPermit2Signatures(
@@ -755,9 +855,10 @@ async function getPermit2Signatures(
     )
     originSignatures.push(signature)
   }
+  const destinationSignature = originSignatures.at(-1) as Hex
   return {
     originSignatures,
-    destinationSignature: originSignatures[0],
+    destinationSignature,
   }
 }
 
@@ -1028,10 +1129,8 @@ function getValidator(
   if (withOwner) {
     // ECDSA
     if (withOwner.kind === 'ecdsa') {
-      return getOwnableValidator(
-        1,
-        withOwner.accounts.map((account) => account.address),
-      )
+      // Use the configured owner validator (e.g., ENS) rather than forcing Ownable
+      return getOwnerValidator(config)
     }
     // Passkeys (WebAuthn)
     if (withOwner.kind === 'passkey') {

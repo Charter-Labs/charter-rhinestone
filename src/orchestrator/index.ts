@@ -23,6 +23,7 @@ import {
   ResourceNotFoundError,
   SchemaValidationError,
   ServiceUnavailableError,
+  SimulationFailedError,
   TokenNotSupportedError,
   UnauthorizedError,
   UnprocessableEntityError,
@@ -31,6 +32,7 @@ import {
   UnsupportedTokenError,
 } from './error'
 import {
+  getAllSupportedChainsAndTokens,
   getSupportedTokens,
   getTokenAddress,
   getTokenSymbol,
@@ -38,6 +40,7 @@ import {
   isTokenAddressSupported,
 } from './registry'
 import type {
+  ApprovalRequired,
   IntentCost,
   IntentInput,
   IntentOp,
@@ -49,16 +52,17 @@ import type {
   SignedIntentOp,
   SupportedChain,
   TokenConfig,
+  TokenRequirements,
+  WrapRequired,
 } from './types'
 import {
+  INTENT_STATUS_CLAIMED,
   INTENT_STATUS_COMPLETED,
   INTENT_STATUS_EXPIRED,
   INTENT_STATUS_FAILED,
   INTENT_STATUS_FILLED,
-  INTENT_STATUS_PARTIALLY_COMPLETED,
   INTENT_STATUS_PENDING,
   INTENT_STATUS_PRECONFIRMED,
-  INTENT_STATUS_UNKNOWN,
 } from './types'
 
 function getOrchestrator(
@@ -80,16 +84,18 @@ export type {
   SupportedChain,
   TokenConfig,
   Portfolio,
+  TokenRequirements,
+  WrapRequired,
+  ApprovalRequired,
 }
 export {
   INTENT_STATUS_PENDING,
   INTENT_STATUS_EXPIRED,
-  INTENT_STATUS_PARTIALLY_COMPLETED,
   INTENT_STATUS_COMPLETED,
   INTENT_STATUS_FILLED,
   INTENT_STATUS_FAILED,
   INTENT_STATUS_PRECONFIRMED,
-  INTENT_STATUS_UNKNOWN,
+  INTENT_STATUS_CLAIMED,
   RHINESTONE_SPOKE_POOL_ADDRESS,
   Orchestrator,
   AuthenticationRequiredError,
@@ -109,6 +115,7 @@ export {
   RateLimitedError,
   SchemaValidationError,
   ServiceUnavailableError,
+  SimulationFailedError,
   UnprocessableEntityError,
   UnauthorizedError,
   TokenNotSupportedError,
@@ -120,6 +127,7 @@ export {
   getTokenSymbol,
   getTokenAddress,
   getSupportedTokens,
+  getAllSupportedChainsAndTokens,
   isOrchestratorError,
   isRetryable,
   isAuthError,

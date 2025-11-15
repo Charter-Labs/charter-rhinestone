@@ -16,21 +16,19 @@ type AccountType = 'GENERIC' | 'ERC7579' | 'EOA'
 const INTENT_STATUS_PENDING = 'PENDING'
 const INTENT_STATUS_FAILED = 'FAILED'
 const INTENT_STATUS_EXPIRED = 'EXPIRED'
-const INTENT_STATUS_PARTIALLY_COMPLETED = 'PARTIALLY_COMPLETED'
 const INTENT_STATUS_COMPLETED = 'COMPLETED'
 const INTENT_STATUS_FILLED = 'FILLED'
 const INTENT_STATUS_PRECONFIRMED = 'PRECONFIRMED'
-const INTENT_STATUS_UNKNOWN = 'UNKNOWN'
+const INTENT_STATUS_CLAIMED = 'CLAIMED'
 
 type IntentStatus =
   | typeof INTENT_STATUS_PENDING
   | typeof INTENT_STATUS_EXPIRED
-  | typeof INTENT_STATUS_PARTIALLY_COMPLETED
   | typeof INTENT_STATUS_COMPLETED
   | typeof INTENT_STATUS_FILLED
   | typeof INTENT_STATUS_PRECONFIRMED
   | typeof INTENT_STATUS_FAILED
-  | typeof INTENT_STATUS_UNKNOWN
+  | typeof INTENT_STATUS_CLAIMED
 
 type AccountAccessListLegacy = {
   chainId: number
@@ -63,7 +61,7 @@ interface Claim {
   claimTransactionHash?: Hex
 }
 
-interface Execution {
+export interface Execution {
   to: Address
   value: string
   data: Hex
@@ -73,6 +71,12 @@ type SettlementLayer =
   | 'SAME_CHAIN'
   | 'INTENT_EXECUTOR'
   | CrossChainSettlementLayer
+
+export enum FundingMethod {
+  COMPACT = 'COMPACT',
+  PERMIT2 = 'PERMIT2',
+  NO_FUNDING = 'NO_FUNDING',
+}
 
 interface IntentOptions {
   topupCompact: boolean
@@ -107,27 +111,15 @@ interface PortfolioToken {
 type Portfolio = PortfolioToken[]
 
 interface IntentInput {
-  account: {
-    address: Address
-    accountType: AccountType
-    setupOps: {
-      to: Address
-      data: Hex
-    }[]
-    delegations?: Record<
-      number,
-      {
-        contract: Address
-      }
-    >
-  }
+  account: Account
   destinationChainId: number
   destinationExecutions: Execution[]
   destinationGasUnits?: bigint
-  tokenTransfers: {
+  tokenRequests: {
     tokenAddress: Address
     amount?: bigint
   }[]
+  recipient?: Account
   accountAccessList?: AccountAccessList
   options: IntentOptions
 }
@@ -168,8 +160,9 @@ interface IntentOpElementMandate {
   qualifier: {
     settlementContext: {
       settlementLayer: SettlementLayer
-      usingJIT: boolean
+      fundingMethod: FundingMethod
       using7579: boolean
+      requestId?: Hex
     }
     encodedVal: Hex
   }
@@ -183,7 +176,7 @@ interface IntentOpElement {
   idsAndAmounts: [[string, string]]
   spendTokens: [[string, string]]
   beforeFill: boolean
-  smartAccountStatus: AccountContext
+  smartAccountStatus?: AccountContext
   mandate: IntentOpElementMandate
 }
 
@@ -210,18 +203,23 @@ interface IntentOp {
     }
     gasPrices: Record<string, string>
     account: AccountWithContext
+    recipient?: AccountWithContext
   }
 }
 
-interface AccountContext {
-  accountType: 'smartAccount'
-  isDeployed: boolean
-  isERC7579: boolean
-  erc7579AccountType: string
-  erc7579AccountVersion: string
-}
+type AccountContext =
+  | {
+      accountType: 'smartAccount'
+      isDeployed: boolean
+      isERC7579: boolean
+      erc7579AccountType: string
+      erc7579AccountVersion: string
+    }
+  | {
+      accountType: 'EOA'
+    }
 
-interface Account {
+export interface Account {
   address: Address
   accountType: AccountType
   setupOps: Pick<Execution, 'to' | 'data'>[]
@@ -265,9 +263,28 @@ interface EmissaryEnable {
   allChainIds: bigint[]
   chainIndex: bigint
 }
+
+interface WrapRequired {
+  type: 'wrap'
+  amount: bigint
+}
+
+interface ApprovalRequired {
+  type: 'approval'
+  amount: bigint
+  spender: Address
+}
+
+type TokenRequirements = {
+  [chainId: number]: {
+    [tokenAddress: Address]: ApprovalRequired | WrapRequired
+  }
+}
+
 interface IntentRoute {
   intentOp: IntentOp
   intentCost: IntentCost
+  tokenRequirements?: TokenRequirements
 }
 
 interface IntentResult {
@@ -366,14 +383,16 @@ export type {
   PortfolioToken,
   MappedChainTokenAccessList,
   UnmappedChainTokenAccessList,
+  TokenRequirements,
+  WrapRequired,
+  ApprovalRequired,
 }
 export {
   INTENT_STATUS_PENDING,
   INTENT_STATUS_FAILED,
   INTENT_STATUS_EXPIRED,
-  INTENT_STATUS_PARTIALLY_COMPLETED,
+  INTENT_STATUS_CLAIMED,
   INTENT_STATUS_COMPLETED,
   INTENT_STATUS_FILLED,
   INTENT_STATUS_PRECONFIRMED,
-  INTENT_STATUS_UNKNOWN,
 }

@@ -14,14 +14,16 @@ import {
   deploy as deployInternal,
   getAccountProvider,
   getAddress as getAddressInternal,
+  getInitCode,
   isDeployed as isDeployedInternal,
   OwnersFieldRequiredError,
   setup as setupInternal,
   signEip7702InitData as signEip7702InitDataInternal,
   deployStandaloneWithEoa as deployStandaloneWithEoaInternal,
 } from './accounts'
-import { walletClientToAccount } from './accounts/walletClient'
+import { walletClientToAccount, wrapParaAccount } from './accounts/walletClient'
 import {
+  getIntentStatus as getIntentStatusInternal,
   getMaxSpendableAmount as getMaxSpendableAmountInternal,
   getPortfolio as getPortfolioInternal,
   sendTransaction as sendTransactionInternal,
@@ -66,6 +68,8 @@ import {
   getValidators as getValidatorsInternal,
 } from './modules'
 import {
+  type ApprovalRequired,
+  getAllSupportedChainsAndTokens,
   getSupportedTokens,
   getTokenAddress,
   type IntentCost,
@@ -75,6 +79,8 @@ import {
   type Portfolio,
   type SettlementLayer,
   type SignedIntentOp,
+  type TokenRequirements,
+  type WrapRequired,
 } from './orchestrator'
 import type {
   AccountProviderConfig,
@@ -91,6 +97,7 @@ import type {
   Recovery,
   RhinestoneAccountConfig,
   RhinestoneConfig,
+  RhinestoneSDKConfig,
   Session,
   SignerSet,
   TokenRequest,
@@ -140,6 +147,7 @@ interface RhinestoneAccount {
   submitTransaction: (
     signedTransaction: SignedTransactionData,
     authorizations?: SignedAuthorizationList,
+    dryRun?: boolean,
   ) => Promise<TransactionResult>
   sendTransaction: (transaction: Transaction) => Promise<TransactionResult>
   prepareUserOperation: (
@@ -166,13 +174,14 @@ interface RhinestoneAccount {
   getPortfolio: (onTestnets?: boolean) => Promise<Portfolio>
   getMaxSpendableAmount: (
     chain: Chain,
-    tokenAddress: Address,
+    tokenAddress: Address | TokenSymbol,
     gasUnits: bigint,
     sponsored?: boolean,
   ) => Promise<bigint>
   getSessionDetails: (
     sessions: Session[],
     sessionIndex: number,
+    initialNonces?: bigint[],
     signature?: Hex,
   ) => Promise<SessionDetails>
   getOwners: (chain: Chain) => Promise<{
@@ -423,20 +432,20 @@ async function createRhinestoneAccount(
   /**
    * Get the maximum spendable token amount on the target chain
    * @param chain Target chain
-   * @param tokenAddress Token address (on the target chain)
+   * @param token Token address (on the target chain)
    * @param gasUnits Gas cost estimate for the transaction execution
    * @returns Maximum spendable amount in absolute units
    */
   function getMaxSpendableAmount(
     chain: Chain,
-    tokenAddress: Address,
+    token: Address | TokenSymbol,
     gasUnits: bigint,
     sponsored: boolean = false,
   ) {
     return getMaxSpendableAmountInternal(
       config,
       chain,
-      tokenAddress,
+      token,
       gasUnits,
       sponsored,
     )
@@ -466,9 +475,16 @@ async function createRhinestoneAccount(
   function getSessionDetails(
     sessions: Session[],
     sessionIndex: number,
+    initialNonces?: bigint[],
     signature?: Hex,
   ) {
-    return getSessionDetailsInternal(config, sessions, sessionIndex, signature)
+    return getSessionDetailsInternal(
+      config,
+      sessions,
+      sessionIndex,
+      initialNonces,
+      signature,
+    )
   }
 
   /**
@@ -519,19 +535,15 @@ class RhinestoneSDK {
   private provider?: ProviderConfig
   private bundler?: BundlerConfig
   private paymaster?: PaymasterConfig
+  private useDevContracts?: boolean
 
-  constructor(options?: {
-    apiKey?: string
-    endpointUrl?: string
-    provider?: ProviderConfig
-    bundler?: BundlerConfig
-    paymaster?: PaymasterConfig
-  }) {
+  constructor(options?: RhinestoneSDKConfig) {
     this.apiKey = options?.apiKey
     this.endpointUrl = options?.endpointUrl
     this.provider = options?.provider
     this.bundler = options?.bundler
     this.paymaster = options?.paymaster
+    this.useDevContracts = options?.useDevContracts
   }
 
   createAccount(config: RhinestoneAccountConfig) {
@@ -542,17 +554,25 @@ class RhinestoneSDK {
       provider: this.provider,
       bundler: this.bundler,
       paymaster: this.paymaster,
+      useDevContracts: this.useDevContracts,
     }
     return createRhinestoneAccount(rhinestoneConfig)
+  }
+
+  getIntentStatus(intentId: bigint) {
+    return getIntentStatusInternal(this.apiKey, this.endpointUrl, intentId)
   }
 }
 
 export {
   RhinestoneSDK,
   walletClientToAccount,
+  wrapParaAccount,
+  getInitCode,
   // Registry functions
   getSupportedTokens,
   getTokenAddress,
+  getAllSupportedChainsAndTokens,
   // Compatibility export for admin service
   deployStandaloneWithEoaInternal as deployStandaloneWithEoa,
   // Permit2 helpers
@@ -598,6 +618,9 @@ export type {
   SettlementLayer,
   SignedIntentOp,
   Portfolio,
+  TokenRequirements,
+  WrapRequired,
+  ApprovalRequired,
   // Multi-chain permit2 types
   MultiChainPermit2Config,
   MultiChainPermit2Result,

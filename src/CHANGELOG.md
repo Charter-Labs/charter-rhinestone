@@ -1,5 +1,127 @@
 # @rhinestone/sdk
 
+## 1.0.23
+
+### Patch Changes
+
+- 96d883d: Clean up logs
+
+## 1.0.22
+
+### Patch Changes
+
+- 7a736ca: Fix API request params: rename `tokenTransfers` → `tokenRequests`
+
+## 1.0.21
+
+### Patch Changes
+
+- ee9287f: increase initial polling duration
+- 10f974f: Fix typing with useDevContracts
+
+## 1.0.20
+
+### Patch Changes
+
+- dd1134b: export getInitCode
+
+## 1.0.19
+
+### Patch Changes
+
+- 39b930a: update latest chains
+
+## 1.0.18
+
+### Patch Changes
+
+- baa581f: Add ens ownable validator support
+
+## 1.0.17
+
+### Patch Changes
+
+- e7eaa9c: use funding method field
+- c680345: Fix signing for multi-chain intents
+
+## 1.0.16
+
+### Patch Changes
+
+- a89112e: Expose "simulation failed" error
+
+## 1.0.15
+
+### Patch Changes
+
+- 700ca58: Fix add recipient parameter in sendTransaction
+
+## 1.0.14
+
+### Patch Changes
+
+- 5e4fc1c: Add eoa response types and getAllSupportedChainsAndTokens function
+
+## 1.0.13
+
+### Patch Changes
+
+- a678eaa: add optional recipient
+
+## 1.0.12
+
+### Patch Changes
+
+- 9788afb: ERC-7739 policies for session keys
+
+## 1.0.11
+
+### Patch Changes
+
+- a4a83b6: Custom RPC endpoints
+
+## 1.0.10
+
+### Patch Changes
+
+- 8425d5c: Implement clear signing for session enablement
+
+## 1.0.9
+
+### Patch Changes
+
+- 81e7007: add wrapParaAccount 0/1 v-byte signer
+
+## 1.0.8
+
+### Patch Changes
+
+- 58c0bf4: use singlechain ops
+
+## 1.0.7
+
+### Patch Changes
+
+- 33bc2b5: Fix the intent executor logic for correct counterfactual generation
+
+## 1.0.6
+
+### Patch Changes
+
+- 668d926: Add "get intent status" utility
+
+## 1.0.5
+
+### Patch Changes
+
+- 096d98f: Allow token symbols for `getMaxSpendableAmount`
+
+## 1.0.4
+
+### Patch Changes
+
+- 1b68dba: Fix default chains in `getPortfolio`
+
 ## 1.0.3
 
 ### Patch Changes

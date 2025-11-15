@@ -1,6 +1,6 @@
 import { type Address, type Chain, createPublicClient, type Hex } from 'viem'
 import type { UserOperationReceipt } from 'viem/_types/account-abstraction'
-import { mainnet, sepolia } from 'viem/chains'
+import { base, baseSepolia } from 'viem/chains'
 import { deploy, getAddress } from '../accounts'
 import { createTransport, getBundlerClient } from '../accounts/utils'
 import type { IntentOpStatus } from '../orchestrator'
@@ -12,8 +12,8 @@ import {
   isRateLimited,
   isRetryable,
 } from '../orchestrator'
-import { getChainById } from '../orchestrator/registry'
-import type { SettlementLayer } from '../orchestrator/types'
+import { getChainById, resolveTokenAddress } from '../orchestrator/registry'
+import type { Account, SettlementLayer } from '../orchestrator/types'
 import type {
   CalldataInput,
   CallInput,
@@ -50,7 +50,7 @@ import {
 } from './utils'
 
 const POLL_INITIAL_MS = 500
-const POLL_SLOW_AFTER_MS = 5000
+const POLL_SLOW_AFTER_MS = 15000
 const POLL_SLOW_MS = 2000
 const POLL_MAX_WAIT_MS = 180000
 const POLL_ERROR_BACKOFF_MS = 1000
@@ -81,6 +81,7 @@ async function sendTransaction(
     calls,
     gasLimit,
     tokenRequests,
+    recipient,
     signers,
     sponsored,
     settlementLayers,
@@ -101,6 +102,7 @@ async function sendTransaction(
     {
       gasLimit,
       initialTokenRequests: tokenRequests,
+      recipient,
       signers,
       sponsored,
       settlementLayers,
@@ -144,6 +146,7 @@ async function sendTransactionInternal(
   options: {
     gasLimit?: bigint
     initialTokenRequests?: TokenRequest[]
+    recipient?: Account
     signers?: SignerSet
     sponsored?: boolean
     settlementLayers?: SettlementLayer[]
@@ -179,6 +182,7 @@ async function sendTransactionInternal(
       resolvedCalls,
       options.gasLimit,
       tokenRequests,
+      options.recipient,
       accountAddress,
       options.dryRun,
       options.signers,
@@ -236,6 +240,7 @@ async function sendTransactionAsIntent(
   callInputs: CalldataInput[],
   gasLimit: bigint | undefined,
   tokenRequests: TokenRequest[],
+  recipient: Account | undefined,
   accountAddress: Address,
   dryRun: boolean = false,
   signers?: SignerSet,
@@ -252,6 +257,7 @@ async function sendTransactionAsIntent(
     callInputs,
     gasLimit,
     tokenRequests,
+    recipient,
     accountAddress,
     sponsored ?? false,
     undefined,
@@ -393,7 +399,7 @@ async function waitForExecution(
 async function getMaxSpendableAmount(
   config: RhinestoneConfig,
   chain: Chain,
-  tokenAddress: Address,
+  token: Address | TokenSymbol,
   gasUnits: bigint,
   sponsored: boolean = false,
 ): Promise<bigint> {
@@ -403,6 +409,7 @@ async function getMaxSpendableAmount(
     config.apiKey,
     config.endpointUrl,
   )
+  const tokenAddress = resolveTokenAddress(token, chain.id)
   return orchestrator.getMaxTokenAmount(
     address,
     chain.id,
@@ -414,13 +421,39 @@ async function getMaxSpendableAmount(
 
 async function getPortfolio(config: RhinestoneConfig, onTestnets: boolean) {
   const address = getAddress(config)
-  const chainId = onTestnets ? sepolia.id : mainnet.id
+  const chainId = onTestnets ? baseSepolia.id : base.id
   const orchestrator = getOrchestratorByChain(
     chainId,
     config.apiKey,
     config.endpointUrl,
   )
   return orchestrator.getPortfolio(address)
+}
+
+async function getIntentStatus(
+  apiKey: string | undefined,
+  endpointUrl: string | undefined,
+  intentId: bigint,
+): Promise<
+  TransactionStatus & {
+    status: IntentOpStatus['status']
+  }
+> {
+  const environment = BigInt(intentId.toString().slice(0, 1))
+  const chainId = environment === 4n ? base.id : baseSepolia.id
+  const orchestrator = getOrchestratorByChain(chainId, apiKey, endpointUrl)
+  const internalStatus = await orchestrator.getIntentOpStatus(intentId)
+  return {
+    status: internalStatus.status,
+    fill: {
+      hash: internalStatus.fillTransactionHash,
+      chainId: chainId,
+    },
+    claims: internalStatus.claims.map((claim) => ({
+      hash: claim.claimTransactionHash,
+      chainId: claim.chainId,
+    })),
+  }
 }
 
 export {
@@ -431,6 +464,7 @@ export {
   waitForExecution,
   getMaxSpendableAmount,
   getPortfolio,
+  getIntentStatus,
   // Errors
   isExecutionError,
   ExecutionError,

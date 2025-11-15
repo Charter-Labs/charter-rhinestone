@@ -1,32 +1,20 @@
-import * as shared from '@rhinestone/shared-configs'
-import type { Address, Chain } from 'viem'
-import { isAddress } from 'viem'
 import {
-  arbitrum,
-  arbitrumSepolia,
-  base,
-  baseSepolia,
-  mainnet,
-  optimism,
-  optimismSepolia,
-  polygon,
-  sepolia,
-  soneium,
-  sonic,
-} from 'viem/chains'
+  type ChainEntry,
+  chainRegistry,
+  chains,
+} from '@rhinestone/shared-configs'
+import { type Address, type Chain, isAddress, zeroAddress } from 'viem'
+import { polygon, sonic } from 'viem/chains'
 import type { TokenSymbol } from '../types'
 import { UnsupportedChainError, UnsupportedTokenError } from './error'
-import type { SupportedChain, TokenConfig } from './types'
+import type { TokenConfig } from './types'
 
 function getSupportedChainIds(): number[] {
-  const arr = ((shared as any).chains ?? []) as any[]
-  return arr.map((c) => (c as any).id as number)
+  return chains.map((chain) => chain.id)
 }
 
-function getChainEntry(chainId: number) {
-  const registry =
-    (shared as any).chainRegistry || (shared as any).ChainRegistry
-  return registry[chainId.toString()]
+function getChainEntry(chainId: number): ChainEntry | undefined {
+  return chainRegistry[chainId.toString()]
 }
 
 function getWethAddress(chain: Chain): Address {
@@ -67,9 +55,6 @@ function getTokenAddress(
   token: TokenSymbol | Address,
   chainId: number,
 ): Address {
-  if (!isChainIdSupported(chainId)) {
-    throw new UnsupportedChainError(chainId)
-  }
   if (typeof token === 'string' && isAddress(token)) return token as Address
   const tokens = getSupportedTokens(chainId)
   const found = tokens.find((x: TokenConfig) => x.symbol === token)
@@ -77,30 +62,12 @@ function getTokenAddress(
   return found.address
 }
 
-function isChainIdSupported(chainId: number): chainId is SupportedChain {
-  const arr = ((shared as any).chains ?? []) as any[]
-  const chainIds = arr.map((c) => (c as any).id as number)
-  return chainIds.includes(chainId)
-}
-
 function getChainById(chainId: number): Chain {
-  const map: Record<number, Chain> = {
-    [mainnet.id]: mainnet,
-    [sepolia.id]: sepolia,
-    [base.id]: base,
-    [baseSepolia.id]: baseSepolia,
-    [arbitrum.id]: arbitrum,
-    [arbitrumSepolia.id]: arbitrumSepolia,
-    [optimism.id]: optimism,
-    [optimismSepolia.id]: optimismSepolia,
-    [polygon.id]: polygon,
-    [soneium.id]: soneium,
-    [sonic.id]: sonic,
-  }
-  if (!isChainIdSupported(chainId)) {
+  const chain = chains.find((chain) => chain.id === chainId)
+  if (!chain) {
     throw new UnsupportedChainError(chainId)
   }
-  return map[chainId]
+  return chain
 }
 
 function isTestnet(chainId: number): boolean {
@@ -121,14 +88,14 @@ function isTokenAddressSupported(address: Address, chainId: number): boolean {
 }
 
 function getSupportedTokens(chainId: number): TokenConfig[] {
-  if (!isChainIdSupported(chainId)) {
+  const entry = getChainEntry(chainId)
+  if (!entry) {
     throw new UnsupportedChainError(chainId)
   }
-  const entry = getChainEntry(chainId)
-  return (entry.tokens as any[]).map((t: any) => ({
-    symbol: t.symbol as string,
+  return entry.tokens.map((t) => ({
+    symbol: t.symbol,
     address: t.address as Address,
-    decimals: t.decimals as number,
+    decimals: t.decimals,
   }))
 }
 
@@ -157,6 +124,17 @@ function resolveTokenAddress(
   return getTokenAddress(token, chainId)
 }
 
+function getAllSupportedChainsAndTokens(): {
+  chainId: number
+  tokens: TokenConfig[]
+}[] {
+  const supportedChainIds = getSupportedChainIds()
+  return supportedChainIds.map((chainId) => ({
+    chainId,
+    tokens: getSupportedTokens(chainId),
+  }))
+}
+
 export {
   getTokenSymbol,
   getTokenAddress,
@@ -168,4 +146,5 @@ export {
   isTokenAddressSupported,
   getDefaultAccountAccessList,
   resolveTokenAddress,
+  getAllSupportedChainsAndTokens,
 }

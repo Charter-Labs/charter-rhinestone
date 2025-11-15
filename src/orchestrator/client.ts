@@ -16,6 +16,7 @@ import {
   RateLimitedError,
   ResourceNotFoundError,
   ServiceUnavailableError,
+  SimulationFailedError,
   TokenNotSupportedError,
   UnauthorizedError,
   UnsupportedChainError,
@@ -119,7 +120,7 @@ export class Orchestrator {
       destinationExecutions: [],
       destinationChainId,
       destinationGasUnits,
-      tokenTransfers: [
+      tokenRequests: [
         {
           tokenAddress: destinationTokenAddress,
         },
@@ -432,6 +433,17 @@ export class Orchestrator {
       message === 'encoding.unsupported'
     ) {
       throw new BodyParserError({ message, ...errorParams })
+    } else if (message === 'Bundle simulation failed') {
+      const simulations = errorParams.context.error.simulations
+      const { traceId, errorType, statusCode, context } = errorParams
+      throw new SimulationFailedError({
+        message,
+        context,
+        errorType,
+        traceId,
+        statusCode,
+        simulations,
+      })
     } else {
       throw new OrchestratorError({ message, ...errorParams })
     }

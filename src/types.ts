@@ -1,7 +1,10 @@
 import type { Account, Address, Chain, Hex } from 'viem'
 import type { WebAuthnAccount } from 'viem/account-abstraction'
 import type { EnableSessionData } from './modules/validators/smart-sessions'
-import type { SettlementLayer } from './orchestrator/types'
+import type {
+  Account as OrchestratorAccount,
+  SettlementLayer,
+} from './orchestrator/types'
 
 type AccountType = 'safe' | 'nexus' | 'kernel' | 'startale' | 'passport' | 'eoa'
 
@@ -48,6 +51,14 @@ interface OwnableValidatorConfig {
   module?: Address
 }
 
+interface ENSValidatorConfig {
+  type: 'ens'
+  accounts: Account[]
+  threshold?: number
+  ownerExpirations: number[]
+  module?: Address
+}
+
 interface WebauthnValidatorConfig {
   type: 'passkey'
   accounts: WebAuthnAccount[]
@@ -57,15 +68,24 @@ interface WebauthnValidatorConfig {
 
 interface MultiFactorValidatorConfig {
   type: 'multi-factor'
-  validators: (OwnableValidatorConfig | WebauthnValidatorConfig)[]
+  validators: (
+    | OwnableValidatorConfig
+    | ENSValidatorConfig
+    | WebauthnValidatorConfig
+  )[]
   threshold?: number
   module?: Address
 }
 
-interface ProviderConfig {
-  type: 'alchemy'
-  apiKey: string
-}
+type ProviderConfig =
+  | {
+      type: 'alchemy'
+      apiKey: string
+    }
+  | {
+      type: 'custom'
+      urls: Record<number, string>
+    }
 
 interface BundlerConfig {
   type: 'pimlico' | 'biconomy'
@@ -79,6 +99,7 @@ interface PaymasterConfig {
 
 type OwnerSet =
   | OwnableValidatorConfig
+  | ENSValidatorConfig
   | WebauthnValidatorConfig
   | MultiFactorValidatorConfig
 
@@ -148,10 +169,17 @@ interface Action {
 
 interface Session {
   owners: OwnerSet
+  chain?: Chain
   policies?: [Policy, ...Policy[]]
   actions?: [Action, ...Action[]]
+  signing?: {
+    allowedContent: {
+      domainSeparator: string
+      contentName: string[]
+    }[]
+    policies?: [Policy, ...Policy[]]
+  }
   salt?: Hex
-  chain?: Chain
 }
 
 interface Recovery {
@@ -183,6 +211,11 @@ interface RhinestoneSDKConfig {
    * Optional orchestrator URL override for internal testing - do not use
    */
   endpointUrl?: string
+  /**
+   * @internal
+   * Optional intent executor address override for internal testing - do not use
+   */
+  useDevContracts?: boolean
 }
 
 type RhinestoneConfig = RhinestoneAccountConfig & RhinestoneSDKConfig
@@ -273,6 +306,7 @@ type SignerSet = OwnerSignerSet | SessionSignerSet | GuardiansSignerSet
 interface BaseTransaction {
   calls: CallInput[]
   tokenRequests?: TokenRequest[]
+  recipient?: OrchestratorAccount
   gasLimit?: bigint
   signers?: SignerSet
   sponsored?: boolean
@@ -329,6 +363,7 @@ export type {
   SourceAssetInput,
   OwnerSet,
   OwnableValidatorConfig,
+  ENSValidatorConfig,
   WebauthnValidatorConfig,
   MultiFactorValidatorConfig,
   SignerSet,
