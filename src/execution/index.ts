@@ -13,7 +13,7 @@ import {
   isRetryable,
 } from '../orchestrator'
 import { getChainById, resolveTokenAddress } from '../orchestrator/registry'
-import type { Account, SettlementLayer } from '../orchestrator/types'
+import type { SettlementLayer } from '../orchestrator/types'
 import type {
   CalldataInput,
   CallInput,
@@ -87,30 +87,23 @@ async function sendTransaction(
     settlementLayers,
     sourceAssets,
     feeAsset,
-    dryRun,
   } = transaction
   const isUserOpSigner =
     signers?.type === 'guardians' || signers?.type === 'session'
   if (isUserOpSigner) {
     throw new SignerNotSupportedError()
   }
-  return await sendTransactionInternal(
-    config,
-    sourceChains,
-    targetChain,
-    calls,
-    {
-      gasLimit,
-      initialTokenRequests: tokenRequests,
-      recipient,
-      signers,
-      sponsored,
-      settlementLayers,
-      sourceAssets,
-      feeAsset,
-      dryRun,
-    },
-  )
+  return await sendTransactionInternal(config, sourceChains, targetChain, {
+    callInputs: calls,
+    gasLimit,
+    initialTokenRequests: tokenRequests,
+    recipient,
+    signers,
+    sponsored,
+    settlementLayers,
+    sourceAssets,
+    feeAsset,
+  })
 }
 
 async function sendUserOperation(
@@ -142,23 +135,22 @@ async function sendTransactionInternal(
   config: RhinestoneConfig,
   sourceChains: Chain[],
   targetChain: Chain,
-  callInputs: CallInput[],
   options: {
+    callInputs?: CallInput[]
     gasLimit?: bigint
     initialTokenRequests?: TokenRequest[]
-    recipient?: Account
+    recipient?: RhinestoneAccountConfig | Address
     signers?: SignerSet
     sponsored?: boolean
     settlementLayers?: SettlementLayer[]
     sourceAssets?: SourceAssetInput
     lockFunds?: boolean
     feeAsset?: Address | TokenSymbol
-    dryRun?: boolean
   },
 ) {
   const accountAddress = getAddress(config)
   const resolvedCalls = await resolveCallInputs(
-    callInputs,
+    options.callInputs,
     config,
     targetChain,
     accountAddress,
@@ -184,7 +176,6 @@ async function sendTransactionInternal(
       tokenRequests,
       options.recipient,
       accountAddress,
-      options.dryRun,
       options.signers,
       options.sponsored,
       options.settlementLayers,
@@ -240,9 +231,8 @@ async function sendTransactionAsIntent(
   callInputs: CalldataInput[],
   gasLimit: bigint | undefined,
   tokenRequests: TokenRequest[],
-  recipient: Account | undefined,
+  recipient: RhinestoneAccountConfig | Address | undefined,
   accountAddress: Address,
-  dryRun: boolean = false,
   signers?: SignerSet,
   sponsored?: boolean,
   settlementLayers?: SettlementLayer[],
@@ -265,6 +255,7 @@ async function sendTransactionAsIntent(
     sourceAssets,
     feeAsset,
     lockFunds,
+    undefined,
   )
   if (!intentRoute) {
     throw new OrderPathRequiredForIntentsError()
@@ -286,7 +277,7 @@ async function sendTransactionAsIntent(
     originSignatures,
     destinationSignature,
     authorizations,
-    dryRun,
+    false,
   )
 }
 

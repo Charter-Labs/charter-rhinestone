@@ -3,8 +3,7 @@ import {
   chainRegistry,
   chains,
 } from '@rhinestone/shared-configs'
-import { type Address, type Chain, isAddress, zeroAddress } from 'viem'
-import { polygon, sonic } from 'viem/chains'
+import { type Address, type Chain, isAddress } from 'viem'
 import type { TokenSymbol } from '../types'
 import { UnsupportedChainError, UnsupportedTokenError } from './error'
 import type { TokenConfig } from './types'
@@ -56,10 +55,17 @@ function getTokenAddress(
   chainId: number,
 ): Address {
   if (typeof token === 'string' && isAddress(token)) return token as Address
-  const tokens = getSupportedTokens(chainId)
-  const found = tokens.find((x: TokenConfig) => x.symbol === token)
-  if (!found) throw new UnsupportedTokenError(token as string, chainId)
-  return found.address
+  const chainEntry = getChainEntry(chainId)
+  if (!chainEntry) {
+    throw new UnsupportedChainError(chainId)
+  }
+
+  const tokenEntry = chainEntry.tokens.find((t) => t.symbol === token)
+  if (!tokenEntry) {
+    throw new UnsupportedTokenError(token as string, chainId)
+  }
+
+  return tokenEntry.address
 }
 
 function getChainById(chainId: number): Chain {
@@ -81,22 +87,24 @@ function isTokenAddressSupported(address: Address, chainId: number): boolean {
     return false
   }
 
-  return chainEntry.tokens.some(
-    (token: any) =>
-      (token.address as string).toLowerCase() === address.toLowerCase(),
-  )
+  return chainEntry.tokens
+    .filter((token) => token.supportsMultichain)
+    .some((token) => token.address.toLowerCase() === address.toLowerCase())
 }
 
 function getSupportedTokens(chainId: number): TokenConfig[] {
-  const entry = getChainEntry(chainId)
-  if (!entry) {
+  const chainEntry = getChainEntry(chainId)
+  if (!chainEntry) {
     throw new UnsupportedChainError(chainId)
   }
-  return entry.tokens.map((t) => ({
-    symbol: t.symbol,
-    address: t.address as Address,
-    decimals: t.decimals,
-  }))
+
+  return chainEntry.tokens
+    .filter((token) => token.supportsMultichain)
+    .map((t) => ({
+      symbol: t.symbol,
+      address: t.address as Address,
+      decimals: t.decimals,
+    }))
 }
 
 function getDefaultAccountAccessList(onTestnets?: boolean) {

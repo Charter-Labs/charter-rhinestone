@@ -33,7 +33,12 @@ import {
 } from '../modules/validators'
 import { OWNABLE_VALIDATOR_ADDRESS } from '../modules/validators/core'
 import type { EnableSessionData } from '../modules/validators/smart-sessions'
-import type { OwnerSet, RhinestoneAccountConfig, Session } from '../types'
+import type {
+  NexusAccount,
+  OwnerSet,
+  RhinestoneAccountConfig,
+  Session,
+} from '../types'
 import {
   AccountConfigurationNotSupportedError,
   Eip712DomainNotAvailableError,
@@ -116,7 +121,9 @@ function getDeployArgs(config: RhinestoneAccountConfig) {
       initializationCallData,
     }
   }
-  const salt = keccak256('0x')
+  const account = config.account
+  const defaultSalt = keccak256('0x')
+  const salt = (account as NexusAccount)?.salt ?? defaultSalt
   const moduleSetup = getModuleSetup(config)
   // Filter out the default validator
   const defaultValidator = moduleSetup.validators.find(
@@ -532,10 +539,7 @@ async function signEip7702InitData(
   return signature
 }
 
-async function getEip7702InitCall(
-  config: RhinestoneAccountConfig,
-  signature: Hex,
-) {
+function getEip7702InitCall(config: RhinestoneAccountConfig, signature: Hex) {
   function getEncodedData(initData: Hex): Hex {
     const chainIds = [0n]
     const chainIdIndex = 0n

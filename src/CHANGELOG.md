@@ -1,5 +1,32 @@
 # @rhinestone/sdk
 
+## 1.0.27
+
+### Patch Changes
+
+- f541d77: simplify supported tokens
+
+## 1.0.26
+
+### Patch Changes
+
+- fc66314: Custom modules for account deployment
+- 59ca158: Set minimal `viem` version to `2.38.0`
+
+## 1.0.25
+
+### Patch Changes
+
+- 59a798a: Add helper to get `initData` for Rhinestone accounts
+
+## 1.0.24
+
+### Patch Changes
+
+- ecb9ab8: Disallow EOA executions (calls)
+- e77a12b: Account nonces
+- 26eca68: Update `recipient` param
+
 ## 1.0.23
 
 ### Patch Changes

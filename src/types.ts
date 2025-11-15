@@ -1,10 +1,8 @@
 import type { Account, Address, Chain, Hex } from 'viem'
 import type { WebAuthnAccount } from 'viem/account-abstraction'
+import type { ModuleType } from './modules/common'
 import type { EnableSessionData } from './modules/validators/smart-sessions'
-import type {
-  Account as OrchestratorAccount,
-  SettlementLayer,
-} from './orchestrator/types'
+import type { SettlementLayer } from './orchestrator/types'
 
 type AccountType = 'safe' | 'nexus' | 'kernel' | 'startale' | 'passport' | 'eoa'
 
@@ -12,20 +10,24 @@ interface SafeAccount {
   type: 'safe'
   version?: '1.4.1'
   adapter?: '1.0.0' | '2.0.0'
+  nonce?: bigint
 }
 
 interface NexusAccount {
   type: 'nexus'
   version?: '1.0.2' | '1.2.0' | 'rhinestone-1.0.0-beta' | 'rhinestone-1.0.0'
+  salt?: Hex
 }
 
 interface KernelAccount {
   type: 'kernel'
   version?: '3.1' | '3.2' | '3.3'
+  salt?: Hex
 }
 
 interface StartaleAccount {
   type: 'startale'
+  salt?: Hex
 }
 
 interface PassportAccount {
@@ -187,12 +189,21 @@ interface Recovery {
   threshold?: number
 }
 
+interface ModuleInput {
+  type: ModuleType
+  address: Address
+  initData?: Hex
+  deInitData?: Hex
+  additionalContext?: Hex
+}
+
 interface RhinestoneAccountConfig {
   account?: AccountProviderConfig
   owners?: OwnerSet
   sessions?: Session[]
   recovery?: Recovery
   eoa?: Account
+  modules?: ModuleInput[]
   initData?: {
     address: Address
     factory: Address
@@ -304,9 +315,9 @@ interface GuardiansSignerSet {
 type SignerSet = OwnerSignerSet | SessionSignerSet | GuardiansSignerSet
 
 interface BaseTransaction {
-  calls: CallInput[]
+  calls?: CallInput[]
   tokenRequests?: TokenRequest[]
-  recipient?: OrchestratorAccount
+  recipient?: RhinestoneAccountConfig | Address
   gasLimit?: bigint
   signers?: SignerSet
   sponsored?: boolean
@@ -315,7 +326,6 @@ interface BaseTransaction {
   feeAsset?: Address | TokenSymbol
   settlementLayers?: SettlementLayer[]
   lockFunds?: boolean
-  dryRun?: boolean
   experimental_accountOverride?: {
     setupOps?: {
       to: Address
@@ -344,6 +354,12 @@ type Transaction = SameChainTransaction | CrossChainTransaction
 
 export type {
   AccountType,
+  SafeAccount,
+  NexusAccount,
+  KernelAccount,
+  StartaleAccount,
+  PassportAccount,
+  EoaAccount,
   RhinestoneAccountConfig,
   RhinestoneSDKConfig,
   RhinestoneConfig,
@@ -369,6 +385,8 @@ export type {
   SignerSet,
   Session,
   Recovery,
+  ModuleType,
+  ModuleInput,
   Policy,
   UniversalActionPolicyParamCondition,
 }

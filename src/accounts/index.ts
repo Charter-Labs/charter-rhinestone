@@ -191,11 +191,11 @@ async function signEip7702InitData(config: RhinestoneConfig) {
   }
 }
 
-async function getEip7702InitCall(config: RhinestoneConfig, signature: Hex) {
+function getEip7702InitCall(config: RhinestoneConfig, signature: Hex) {
   const account = getAccountProvider(config)
   switch (account.type) {
     case 'nexus': {
-      return await getNexusEip7702InitCall(config, signature)
+      return getNexusEip7702InitCall(config, signature)
     }
     case 'safe':
     case 'kernel':
@@ -582,7 +582,9 @@ async function setup(config: RhinestoneConfig, chain: Chain): Promise<boolean> {
   )
   let result: TransactionResult | UserOperationResult
   if (hasIntentExecutor) {
-    result = await sendTransactionInternal(config, [chain], chain, calls, {})
+    result = await sendTransactionInternal(config, [chain], chain, {
+      callInputs: calls,
+    })
   } else {
     result = await sendUserOperationInternal(config, chain, calls)
   }
@@ -608,12 +610,7 @@ async function deployWithIntent(
   const result = await sendTransaction(config, {
     sourceChains: [chain],
     targetChain: chain,
-    calls: [
-      {
-        to: zeroAddress,
-        data: '0x',
-      },
-    ],
+    calls: [],
     sponsored,
   })
   await waitForExecution(config, result, true)
