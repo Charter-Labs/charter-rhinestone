@@ -25,10 +25,9 @@ const COMPACT_TYPED_DATA_TYPES = {
   ],
   Mandate: [
     { name: 'target', type: 'Target' },
-    { name: 'v', type: 'uint8' },
     { name: 'minGas', type: 'uint128' },
-    { name: 'originOps', type: 'Op[]' },
-    { name: 'destOps', type: 'Op[]' },
+    { name: 'originOps', type: 'Op' },
+    { name: 'destOps', type: 'Op' },
     { name: 'q', type: 'bytes32' },
   ],
   Target: [
@@ -42,6 +41,10 @@ const COMPACT_TYPED_DATA_TYPES = {
     { name: 'amount', type: 'uint256' },
   ],
   Op: [
+    { name: 'vt', type: 'bytes32' },
+    { name: 'ops', type: 'Ops[]' },
+  ],
+  Ops: [
     { name: 'to', type: 'address' },
     { name: 'value', type: 'uint256' },
     { name: 'data', type: 'bytes' },
@@ -53,7 +56,7 @@ function getCompactTypedData(intentOp: IntentOp) {
     domain: {
       name: 'The Compact',
       version: '1',
-      chainId: BigInt(intentOp.elements[0].chainId),
+      chainId: Number(intentOp.elements[0].chainId),
       verifyingContract: '0x73d2dc0c21fca4ec1601895d50df7f5624f07d3f',
     },
     types: COMPACT_TYPED_DATA_TYPES,
@@ -80,18 +83,9 @@ function getCompactTypedData(intentOp: IntentOp) {
             targetChain: BigInt(element.mandate.destinationChainId),
             fillExpiry: BigInt(element.mandate.fillDeadline),
           },
-          v: element.mandate.v || 0,
-          minGas: BigInt(element.mandate.minGas || '0'),
-          originOps: element.mandate.preClaimOps.map((op) => ({
-            to: op.to,
-            value: BigInt(op.value),
-            data: op.data,
-          })),
-          destOps: element.mandate.destinationOps.map((op) => ({
-            to: op.to,
-            value: BigInt(op.value),
-            data: op.data,
-          })),
+          minGas: BigInt(element.mandate.minGas),
+          originOps: element.mandate.preClaimOps,
+          destOps: element.mandate.destinationOps,
           q: keccak256(element.mandate.qualifier.encodedVal),
         },
       })),

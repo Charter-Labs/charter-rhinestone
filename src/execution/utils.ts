@@ -16,6 +16,7 @@ import {
   type SignedAuthorization,
   type SignedAuthorizationList,
   type TypedData,
+  type TypedDataDefinition,
   type TypedDataDomain,
   toHex,
   zeroAddress,
@@ -27,7 +28,9 @@ import {
 } from 'viem/account-abstraction'
 import { wrapTypedDataSignature } from 'viem/experimental/erc7739'
 import {
+  EoaAccountMustHaveAccountError,
   EoaSigningMethodNotConfiguredError,
+  FactoryArgsNotAvailableError,
   getAddress,
   getEip712Domain,
   getEip7702InitCall,
@@ -35,7 +38,6 @@ import {
   getInitCode,
   getPackedSignature,
   getSmartAccount,
-  getSmartSessionSmartAccount,
   getTypedDataPackedSignature,
   is7702,
   toErc6492Signature,
@@ -91,13 +93,14 @@ import type {
   RhinestoneConfig,
   SignerSet,
   SourceAssetInput,
+  Sponsorship,
   TokenRequest,
   TokenSymbol,
   Transaction,
   UserOperationTransaction,
 } from '../types'
-import { getCompactTypedData, getPermit2Digest } from './compact'
-import { CallsNotSupportedError, SignerNotSupportedError } from './error'
+import { getCompactTypedData } from './compact'
+import { SignerNotSupportedError } from './error'
 import { getTypedData as getPermit2TypedData } from './permit2'
 import { getTypedData as getSingleChainOpsTypedData } from './singleChainOps'
 
@@ -154,8 +157,7 @@ async function prepareTransaction(
   } = getTransactionParams(transaction)
   const accountAddress = getAddress(config)
 
-  const isUserOpSigner =
-    signers?.type === 'guardians' || signers?.type === 'session'
+  const isUserOpSigner = signers?.type === 'guardians'
   if (isUserOpSigner) {
     throw new SignerNotSupportedError()
   }
@@ -172,8 +174,7 @@ async function prepareTransaction(
     transaction.gasLimit,
     tokenRequests,
     recipient,
-    accountAddress,
-    sponsored ?? false,
+    sponsored,
     eip7702InitSignature,
     settlementLayers,
     sourceAssets,
@@ -234,17 +235,24 @@ async function resolveCallInputs(
   return resolved
 }
 
+function getTransactionMessages(
+  config: RhinestoneConfig,
+  preparedTransaction: PreparedTransactionData,
+): {
+  origin: TypedDataDefinition[]
+  destination: TypedDataDefinition
+} {
+  return getIntentMessages(config, preparedTransaction.intentRoute.intentOp)
+}
+
 async function signTransaction(
   config: RhinestoneConfig,
   preparedTransaction: PreparedTransactionData,
 ): Promise<SignedTransactionData> {
-  const { targetChain, signers } = getTransactionParams(
-    preparedTransaction.transaction,
-  )
+  const { signers } = getTransactionParams(preparedTransaction.transaction)
   const intentRoute = preparedTransaction.intentRoute
   const { originSignatures, destinationSignature } = await signIntent(
     config,
-    targetChain,
     intentRoute.intentOp,
     signers,
   )
@@ -327,7 +335,7 @@ async function signTypedData<
   const ownerValidator = getOwnerValidator(config)
   const isRoot = validator.address === ownerValidator.address
 
-  if (signers?.type === 'session') {
+  if (signers?.type === 'experimental_session') {
     return await signTypedDataWithSession(
       config,
       chain,
@@ -360,7 +368,7 @@ async function signTypedDataWithSession<
   config: RhinestoneConfig,
   chain: Chain,
   validator: ValidatorConfig,
-  signers: SignerSet & { type: 'session' },
+  signers: SignerSet & { type: 'experimental_session' },
   parameters: HashTypedDataParameters<typedData, primaryType>,
 ) {
   const { name, version, chainId, verifyingContract, salt } = getEip712Domain(
@@ -529,7 +537,7 @@ function getTransactionParams(transaction: Transaction) {
 }
 
 function getTokenRequests(
-  sourceChains: Chain[],
+  sourceChains: Chain[] | undefined,
   targetChain: Chain,
   initialTokenRequests: TokenRequest[] | undefined,
   settlementLayers: SettlementLayer[] | undefined,
@@ -547,7 +555,9 @@ function getTokenRequests(
   }
   const isSameChain =
     (settlementLayers?.length === 1 && settlementLayers[0] === 'SAME_CHAIN') ||
-    (sourceChains.length === 1 && sourceChains[0].id === targetChain.id)
+    (sourceChains &&
+      sourceChains.length === 1 &&
+      sourceChains[0].id === targetChain.id)
   const tokenRequests =
     !initialTokenRequests || initialTokenRequests.length === 0
       ? isSameChain
@@ -595,6 +605,44 @@ async function prepareTransactionAsUserOp(
   }
 }
 
+function getAccountType(
+  accountConfig: AccountProviderConfig | undefined,
+): 'EOA' | 'ERC7579' {
+  if (accountConfig?.type === 'eoa') {
+    return 'EOA'
+  } else {
+    return 'ERC7579'
+  }
+}
+
+function getIntentAccount(
+  config: RhinestoneConfig,
+  eip7702InitSignature: Hex | undefined,
+  account:
+    | {
+        setupOps?: {
+          to: Address
+          data: Hex
+        }[]
+      }
+    | undefined,
+) {
+  const accountAddress = getAddress(config)
+  const accountType = getAccountType(config.account)
+
+  const { setupOps, delegations } = getSetupOperationsAndDelegations(
+    config,
+    accountAddress,
+    eip7702InitSignature,
+  )
+  return {
+    address: accountAddress,
+    accountType: accountType,
+    setupOps: account?.setupOps ?? setupOps,
+    delegations,
+  }
+}
+
 async function prepareTransactionAsIntent(
   config: RhinestoneConfig,
   sourceChains: Chain[] | undefined,
@@ -603,8 +651,7 @@ async function prepareTransactionAsIntent(
   gasLimit: bigint | undefined,
   tokenRequests: TokenRequest[],
   recipientInput: RhinestoneAccountConfig | Address | undefined,
-  accountAddress: Address,
-  isSponsored: boolean,
+  sponsored: Sponsorship | undefined,
   eip7702InitSignature: Hex | undefined,
   settlementLayers: SettlementLayer[] | undefined,
   sourceAssets: SourceAssetInput | undefined,
@@ -619,29 +666,8 @@ async function prepareTransactionAsIntent(
       }
     | undefined,
 ) {
-  if (config.account?.type === 'eoa') {
-    if (callInputs.length > 0) {
-      throw new CallsNotSupportedError()
-    }
-  }
   const calls = parseCalls(callInputs, targetChain.id)
   const accountAccessList = createAccountAccessList(sourceChains, sourceAssets)
-
-  const { setupOps, delegations } = getSetupOperationsAndDelegations(
-    config,
-    accountAddress,
-    eip7702InitSignature,
-  )
-
-  function getAccountType(
-    accountConfig: AccountProviderConfig | undefined,
-  ): 'EOA' | 'ERC7579' {
-    if (accountConfig?.type === 'eoa') {
-      return 'EOA'
-    } else {
-      return 'ERC7579'
-    }
-  }
 
   function getRecipient(
     recipient: RhinestoneAccountConfig | Address | undefined,
@@ -655,33 +681,13 @@ async function prepareTransactionAsIntent(
         delegations: undefined,
       }
     }
-    const recipientAddress = recipient ? getAddress(recipient) : undefined
-    const recipientAccountType = recipient
-      ? getAccountType(recipient.account)
-      : undefined
-    const { setupOps: recipientSetupOps, delegations: recipientDelegations } =
-      recipient && recipientAddress
-        ? getSetupOperationsAndDelegations(
-            recipient,
-            recipientAddress,
-            eip7702InitSignature,
-          )
-        : {
-            setupOps: [],
-            delegations: {},
-          }
-    if (!recipientAddress || !recipientAccountType) {
+    if (!recipient) {
       return undefined
     }
-    return {
-      address: recipientAddress,
-      accountType: recipientAccountType,
-      setupOps: recipientSetupOps,
-      delegations: recipientDelegations,
-    }
+    return getIntentAccount(recipient, eip7702InitSignature, account)
   }
 
-  const accountType = getAccountType(config.account)
+  const intentAccount = getIntentAccount(config, eip7702InitSignature, account)
   const recipient = getRecipient(recipientInput)
 
   const metaIntent: IntentInput = {
@@ -691,27 +697,26 @@ async function prepareTransactionAsIntent(
       amount: tokenRequest.amount,
     })),
     recipient,
-    account: {
-      address: accountAddress,
-      accountType: accountType,
-      setupOps: account?.setupOps ?? setupOps,
-      delegations,
-    },
-    destinationExecutions: calls.map((call) => ({
-      to: call.to,
-      value: call.value.toString(),
-      data: call.data,
-    })),
+    account: intentAccount,
+    destinationExecutions: calls,
     destinationGasUnits: gasLimit,
     accountAccessList,
     options: {
       topupCompact: lockFunds ?? false,
       feeToken: feeAsset,
-      sponsorSettings: {
-        gasSponsored: isSponsored,
-        bridgeFeesSponsored: isSponsored,
-        swapFeesSponsored: isSponsored,
-      },
+      sponsorSettings: sponsored
+        ? typeof sponsored === 'object'
+          ? {
+              gasSponsored: sponsored.gas,
+              bridgeFeesSponsored: sponsored.bridging,
+              swapFeesSponsored: sponsored.swaps,
+            }
+          : {
+              gasSponsored: sponsored,
+              bridgeFeesSponsored: sponsored,
+              swapFeesSponsored: sponsored,
+            }
+        : undefined,
       settlementLayers,
     },
   }
@@ -727,43 +732,22 @@ async function prepareTransactionAsIntent(
 
 async function signIntent(
   config: RhinestoneConfig,
-  targetChain: Chain,
   intentOp: IntentOp,
   signers?: SignerSet,
 ) {
+  const { origin } = getIntentMessages(config, intentOp)
   if (config.account?.type === 'eoa') {
+    const eoa = config.eoa
+    if (!eoa) {
+      throw new EoaAccountMustHaveAccountError()
+    }
     const originSignatures: Hex[] = []
-    for (const element of intentOp.elements) {
-      let digest: Hex | undefined
-      if (config.eoa?.signTypedData) {
-        const typedData = getPermit2TypedData(
-          element,
-          BigInt(intentOp.nonce),
-          BigInt(intentOp.expires),
-        )
-        originSignatures.push(await config.eoa.signTypedData(typedData))
-      } else if (config.eoa?.sign) {
-        digest = getPermit2Digest(
-          element,
-          BigInt(intentOp.nonce),
-          BigInt(intentOp.expires),
-        )
-        originSignatures.push(await (config.eoa as any).sign({ hash: digest }))
-      } else if (config.eoa?.signMessage) {
-        digest = getPermit2Digest(
-          element,
-          BigInt(intentOp.nonce),
-          BigInt(intentOp.expires),
-        )
-        originSignatures.push(
-          await (config.eoa as any).signMessage({
-            message: { raw: digest },
-          }),
-        )
+    for (const typedData of origin) {
+      if (eoa.signTypedData) {
+        const signature = await eoa.signTypedData(typedData)
+        originSignatures.push(signature)
       } else {
-        throw new EoaSigningMethodNotConfiguredError(
-          'signTypedData, sign, or signMessage',
-        )
+        throw new EoaSigningMethodNotConfiguredError('signTypedData')
       }
     }
     const destinationSignature = originSignatures.at(-1) as Hex
@@ -779,157 +763,67 @@ async function signIntent(
   }
   const ownerValidator = getOwnerValidator(config)
   const isRoot = validator.address === ownerValidator.address
-  const signatures = await getIntentSignature(
-    config,
-    intentOp,
-    signers,
-    targetChain,
-    validator,
-    isRoot,
-  )
+
+  const originSignatures: Hex[] = []
+  for (const typedData of origin) {
+    const chain = getChainById(typedData.domain?.chainId as number)
+    const signature = await signIntentTypedData(
+      config,
+      signers,
+      validator,
+      isRoot,
+      typedData,
+      chain,
+    )
+    originSignatures.push(signature)
+  }
+  const destinationSignature = originSignatures.at(-1) as Hex
   return {
-    originSignatures: signatures.originSignatures,
-    destinationSignature: signatures.destinationSignature,
+    originSignatures,
+    destinationSignature,
   }
 }
 
-async function getIntentSignature(
-  config: RhinestoneConfig,
-  intentOp: IntentOp,
-  signers: SignerSet | undefined,
-  targetChain: Chain,
-  validator: Module,
-  isRoot: boolean,
-) {
+function getIntentMessages(config: RhinestoneConfig, intentOp: IntentOp) {
+  const address = getAddress(config)
+  const intentExecutor = getIntentExecutor(config)
+
   const withPermit2 = intentOp.elements.some(
     (element) =>
-      element.mandate.qualifier.settlementContext?.fundingMethod === 'PERMIT2',
+      element.mandate.qualifier.settlementContext.fundingMethod === 'PERMIT2',
   )
   const withIntentExecutorOps = intentOp.elements.some(
     (element) =>
       element.mandate.qualifier.settlementContext.settlementLayer ===
       'INTENT_EXECUTOR',
   )
-  if (withIntentExecutorOps) {
-    const signature = await getSingleChainOpsSignature(
-      config,
-      intentOp,
-      signers,
-      targetChain,
-      validator,
-      isRoot,
-    )
-    return signature
-  }
-
-  if (withPermit2) {
-    return await getPermit2Signatures(
-      config,
-      intentOp,
-      signers,
-      targetChain,
-      validator,
-      isRoot,
-    )
-  }
-  const signature = await getCompactSignature(
-    config,
-    intentOp,
-    signers,
-    targetChain,
-    validator,
-    isRoot,
-  )
-  return {
-    originSignatures: Array(intentOp.elements.length).fill(signature),
-    destinationSignature: signature,
-  }
-}
-
-async function getSingleChainOpsSignature(
-  config: RhinestoneConfig,
-  intentOp: IntentOp,
-  signers: SignerSet | undefined,
-  targetChain: Chain,
-  validator: Module,
-  isRoot: boolean,
-) {
-  const address = getAddress(config)
-  const intentExecutor = getIntentExecutor(config)
-  const originSignatures: Hex[] = []
+  const origin: TypedDataDefinition[] = []
   for (const element of intentOp.elements) {
-    const typedData = getSingleChainOpsTypedData(
-      address,
-      intentExecutor.address,
-      element,
-      BigInt(intentOp.nonce),
-    )
-    const signature = await signIntentTypedData(
-      config,
-      signers,
-      targetChain,
-      validator,
-      isRoot,
-      typedData,
-    )
-    originSignatures.push(signature)
+    if (withIntentExecutorOps) {
+      const typedData = getSingleChainOpsTypedData(
+        address,
+        intentExecutor.address,
+        element,
+        BigInt(intentOp.nonce),
+      )
+      origin.push(typedData)
+    } else if (withPermit2) {
+      const typedData = getPermit2TypedData(
+        element,
+        BigInt(intentOp.nonce),
+        BigInt(intentOp.expires),
+      )
+      origin.push(typedData)
+    } else {
+      const typedData = getCompactTypedData(intentOp)
+      origin.push(typedData)
+    }
   }
-  const destinationSignature = originSignatures.at(-1) as Hex
+  const destination = origin.at(-1) as TypedDataDefinition
   return {
-    originSignatures,
-    destinationSignature,
+    origin,
+    destination,
   }
-}
-
-async function getPermit2Signatures(
-  config: RhinestoneConfig,
-  intentOp: IntentOp,
-  signers: SignerSet | undefined,
-  targetChain: Chain,
-  validator: Module,
-  isRoot: boolean,
-) {
-  const originSignatures: Hex[] = []
-  for (const element of intentOp.elements) {
-    const typedData = getPermit2TypedData(
-      element,
-      BigInt(intentOp.nonce),
-      BigInt(intentOp.expires),
-    )
-    const signature = await signIntentTypedData(
-      config,
-      signers,
-      targetChain,
-      validator,
-      isRoot,
-      typedData,
-    )
-    originSignatures.push(signature)
-  }
-  const destinationSignature = originSignatures.at(-1) as Hex
-  return {
-    originSignatures,
-    destinationSignature,
-  }
-}
-
-async function getCompactSignature(
-  config: RhinestoneConfig,
-  intentOp: IntentOp,
-  signers: SignerSet | undefined,
-  targetChain: Chain,
-  validator: Module,
-  isRoot: boolean,
-) {
-  const typedData = getCompactTypedData(intentOp)
-  return await signIntentTypedData(
-    config,
-    signers,
-    targetChain,
-    validator,
-    isRoot,
-    typedData,
-  )
 }
 
 async function signIntentTypedData<
@@ -938,16 +832,16 @@ async function signIntentTypedData<
 >(
   config: RhinestoneConfig,
   signers: SignerSet | undefined,
-  targetChain: Chain,
   validator: Module,
   isRoot: boolean,
   parameters: HashTypedDataParameters<typedData, primaryType>,
+  chain: Chain,
 ) {
   if (supportsEip712(validator)) {
     return await getTypedDataPackedSignature(
       config,
       signers,
-      targetChain,
+      chain,
       {
         address: validator.address,
         isRoot,
@@ -959,7 +853,7 @@ async function signIntentTypedData<
   return await getPackedSignature(
     config,
     signers,
-    targetChain,
+    chain,
     {
       address: validator.address,
       isRoot,
@@ -1148,23 +1042,14 @@ async function getValidatorAccount(
     return getSmartAccount(config, publicClient, chain)
   }
 
-  const withSession = signers.type === 'session' ? signers : null
   const withGuardians = signers.type === 'guardians' ? signers : null
 
-  return withSession
-    ? await getSmartSessionSmartAccount(
-        config,
-        publicClient,
-        chain,
-        withSession.session,
-        withSession.enableData || null,
-      )
-    : withGuardians
-      ? await getGuardianSmartAccount(config, publicClient, chain, {
-          type: 'ecdsa',
-          accounts: withGuardians.guardians,
-        })
-      : null
+  return withGuardians
+    ? await getGuardianSmartAccount(config, publicClient, chain, {
+        type: 'ecdsa',
+        accounts: withGuardians.guardians,
+      })
+    : null
 }
 
 function getValidator(
@@ -1200,7 +1085,8 @@ function getValidator(
   }
 
   // Smart sessions
-  const withSession = signers.type === 'session' ? signers.session : null
+  const withSession =
+    signers.type === 'experimental_session' ? signers.session : null
   if (withSession) {
     return getSmartSessionValidator(config)
   }
@@ -1275,12 +1161,17 @@ function getSetupOperationsAndDelegations(
       },
     }
   } else if (initCode) {
+    const to = 'factory' in initCode ? initCode.factory : undefined
+    const data = 'factory' in initCode ? initCode.factoryData : undefined
+    if (!to || !data) {
+      throw new FactoryArgsNotAvailableError()
+    }
     // Contract account with init code
     return {
       setupOps: [
         {
-          to: initCode.factory,
-          data: initCode.factoryData,
+          to,
+          data,
         },
       ],
     }
@@ -1318,6 +1209,7 @@ function validateTokenSymbols(
 
 export {
   prepareTransaction,
+  getTransactionMessages,
   signTransaction,
   signAuthorizations,
   signAuthorizationsInternal,
@@ -1335,6 +1227,7 @@ export {
   parseCalls,
   getTokenRequests,
   resolveCallInputs,
+  getIntentAccount,
 }
 export type {
   IntentRoute,

@@ -24,21 +24,9 @@ import {
 
 import { getSetup as getModuleSetup } from '../modules'
 import type { Module } from '../modules/common'
-import {
-  encodeSmartSessionSignature,
-  getMockSignature,
-  getPermissionId,
-  SMART_SESSION_MODE_ENABLE,
-  SMART_SESSION_MODE_USE,
-} from '../modules/validators'
+import { getMockSignature } from '../modules/validators'
 import { OWNABLE_VALIDATOR_ADDRESS } from '../modules/validators/core'
-import type { EnableSessionData } from '../modules/validators/smart-sessions'
-import type {
-  NexusAccount,
-  OwnerSet,
-  RhinestoneAccountConfig,
-  Session,
-} from '../types'
+import type { NexusAccount, OwnerSet, RhinestoneAccountConfig } from '../types'
 import {
   AccountConfigurationNotSupportedError,
   Eip712DomainNotAvailableError,
@@ -67,59 +55,26 @@ const NEXUS_CREATION_CODE =
 
 function getDeployArgs(config: RhinestoneAccountConfig) {
   if (config.initData) {
-    const factoryData = decodeFunctionData({
-      abi: parseAbi([
-        'function createAccount(address eoaOwner,uint256 index,address[] attesters,uint8 threshold)',
-      ]),
-      data: config.initData.factoryData,
-    })
-    if (factoryData.functionName !== 'createAccount') {
-      throw new AccountConfigurationNotSupportedError(
-        'Invalid factory data',
-        'nexus',
-      )
+    if (!('factory' in config.initData)) {
+      return null
     }
-    const owner = factoryData.args[0]
-    const index = factoryData.args[1]
-    const attesters = factoryData.args[2]
-    const threshold = factoryData.args[3]
-    const salt = keccak256(
-      encodePacked(
-        ['address', 'uint256', 'address[]', 'uint8'],
-        [owner, index, attesters, threshold],
-      ),
-    )
-    const implementation =
-      config.initData.factory === NEXUS_FACTORY_ADDRESS
-        ? NEXUS_IMPLEMENTATION_ADDRESS
-        : NEXUS_IMPLEMENTATION_1_0_0
 
-    const registry = zeroAddress
-    const bootstrapData = encodeFunctionData({
-      abi: parseAbi([
-        'function initNexusWithSingleValidator(address validator,bytes data,address registry,address[] attesters,uint8 threshold)',
-      ]),
-      functionName: 'initNexusWithSingleValidator',
-      args: [NEXUS_K1_VALIDATOR, owner, registry, attesters, threshold],
-    })
-    const initData = encodeAbiParameters(
-      [{ type: 'address' }, { type: 'bytes' }],
-      [NEXUS_BOOTSTRAP_1_0_0, bootstrapData],
-    )
-    const initializationCallData = encodeFunctionData({
-      abi: parseAbi(['function initializeAccount(bytes)']),
-      functionName: 'initializeAccount',
-      args: [initData],
-    })
+    const { factory, factoryData } = config.initData
 
-    return {
-      salt,
-      factory: config.initData.factory,
-      factoryData: config.initData.factoryData,
-      implementation,
-      initData,
-      initializationCallData,
+    const v1Result = tryDecodeV1FactoryData(factory, factoryData)
+    if (v1Result) {
+      return v1Result
     }
+
+    const v0Result = tryDecodeV0FactoryData(factory, factoryData)
+    if (v0Result) {
+      return v0Result
+    }
+
+    throw new AccountConfigurationNotSupportedError(
+      'Invalid factory data: unrecognized schema',
+      'nexus',
+    )
   }
   const account = config.account
   const defaultSalt = keccak256('0x')
@@ -218,8 +173,14 @@ function getDeployArgs(config: RhinestoneAccountConfig) {
 }
 
 function getAddress(config: RhinestoneAccountConfig) {
-  const { factory, salt, initializationCallData, implementation } =
-    getDeployArgs(config)
+  const deployArgs = getDeployArgs(config)
+  if (!deployArgs) {
+    if (config.initData?.address) {
+      return config.initData.address
+    }
+    throw new Error('Cannot derive address: deploy args not available')
+  }
+  const { factory, salt, initializationCallData, implementation } = deployArgs
 
   const creationCode =
     factory === NEXUS_FACTORY_ADDRESS
@@ -355,55 +316,6 @@ async function getSmartAccount(
   )
 }
 
-async function getSessionSmartAccount(
-  client: PublicClient,
-  address: Address,
-  session: Session,
-  validatorAddress: Address,
-  enableData: EnableSessionData | null,
-  sign: (hash: Hex) => Promise<Hex>,
-  defaultValidatorAddress: Address = NEXUS_DEFAULT_VALIDATOR_ADDRESS,
-) {
-  return await getBaseSmartAccount(
-    address,
-    client,
-    validatorAddress,
-    async () => {
-      const dummyOpSignature = getMockSignature(session.owners)
-      if (enableData) {
-        return encodeSmartSessionSignature(
-          SMART_SESSION_MODE_ENABLE,
-          getPermissionId(session),
-          dummyOpSignature,
-          enableData,
-        )
-      }
-      return encodeSmartSessionSignature(
-        SMART_SESSION_MODE_USE,
-        getPermissionId(session),
-        dummyOpSignature,
-      )
-    },
-    async (hash) => {
-      const signature = await sign(hash)
-      if (enableData) {
-        return encodeSmartSessionSignature(
-          SMART_SESSION_MODE_ENABLE,
-          getPermissionId(session),
-          signature,
-          enableData,
-        )
-      }
-      return encodeSmartSessionSignature(
-        SMART_SESSION_MODE_USE,
-        getPermissionId(session),
-        signature,
-      )
-    },
-    defaultValidatorAddress,
-  )
-}
-
 async function getGuardianSmartAccount(
   client: PublicClient,
   address: Address,
@@ -513,7 +425,11 @@ async function signEip7702InitData(
   config: RhinestoneAccountConfig,
   eoa: Account,
 ) {
-  const { initData } = getDeployArgs(config)
+  const deployArgs = getDeployArgs(config)
+  if (!deployArgs) {
+    throw new Error('Cannot sign EIP-7702 init data: deploy args not available')
+  }
+  const { initData } = deployArgs
   if (!eoa.signTypedData) {
     throw new SigningNotSupportedForAccountError()
   }
@@ -551,7 +467,11 @@ function getEip7702InitCall(config: RhinestoneAccountConfig, signature: Hex) {
     return encodedData
   }
 
-  const { initData } = getDeployArgs(config)
+  const deployArgs = getDeployArgs(config)
+  if (!deployArgs) {
+    throw new Error('Cannot get EIP-7702 init call: deploy args not available')
+  }
+  const { initData } = deployArgs
   const encodedData = getEncodedData(initData)
   const accountFullData = concat([signature, encodedData])
   const accountInitCallData = encodeFunctionData({
@@ -579,6 +499,97 @@ function getEip7702InitCall(config: RhinestoneAccountConfig, signature: Hex) {
   }
 }
 
+function tryDecodeV1FactoryData(factory: Address, factoryData: Hex) {
+  try {
+    const decoded = decodeFunctionData({
+      abi: parseAbi(['function createAccount(bytes,bytes32)']),
+      data: factoryData,
+    })
+    const initData = decoded.args[0]
+    const salt = decoded.args[1]
+    const initializationCallData = encodeFunctionData({
+      abi: parseAbi(['function initializeAccount(bytes)']),
+      functionName: 'initializeAccount',
+      args: [initData],
+    })
+    return {
+      salt,
+      factory,
+      factoryData,
+      implementation: NEXUS_IMPLEMENTATION_ADDRESS,
+      initData,
+      initializationCallData,
+    }
+  } catch (error) {
+    if (isAbiDecodingError(error)) {
+      return null
+    }
+    throw error
+  }
+}
+
+function tryDecodeV0FactoryData(factory: Address, factoryData: Hex) {
+  try {
+    const decoded = decodeFunctionData({
+      abi: parseAbi([
+        'function createAccount(address eoaOwner,uint256 index,address[] attesters,uint8 threshold)',
+      ]),
+      data: factoryData,
+    })
+    const owner = decoded.args[0]
+    const index = decoded.args[1]
+    const attesters = decoded.args[2]
+    const threshold = decoded.args[3]
+    const salt = keccak256(
+      encodePacked(
+        ['address', 'uint256', 'address[]', 'uint8'],
+        [owner, index, attesters, threshold],
+      ),
+    )
+    const implementation =
+      factory === NEXUS_FACTORY_ADDRESS
+        ? NEXUS_IMPLEMENTATION_ADDRESS
+        : NEXUS_IMPLEMENTATION_1_0_0
+
+    const registry = zeroAddress
+    const bootstrapData = encodeFunctionData({
+      abi: parseAbi([
+        'function initNexusWithSingleValidator(address validator,bytes data,address registry,address[] attesters,uint8 threshold)',
+      ]),
+      functionName: 'initNexusWithSingleValidator',
+      args: [NEXUS_K1_VALIDATOR, owner, registry, attesters, threshold],
+    })
+    const initData = encodeAbiParameters(
+      [{ type: 'address' }, { type: 'bytes' }],
+      [NEXUS_BOOTSTRAP_1_0_0, bootstrapData],
+    )
+    const initializationCallData = encodeFunctionData({
+      abi: parseAbi(['function initializeAccount(bytes)']),
+      functionName: 'initializeAccount',
+      args: [initData],
+    })
+    return {
+      salt,
+      factory,
+      factoryData,
+      implementation,
+      initData,
+      initializationCallData,
+    }
+  } catch (error) {
+    if (isAbiDecodingError(error)) {
+      return null
+    }
+    throw error
+  }
+}
+
+function isAbiDecodingError(error: unknown): boolean {
+  return (
+    error instanceof Error && error.name === 'AbiFunctionSignatureNotFoundError'
+  )
+}
+
 export {
   getEip712Domain,
   getInstallData,
@@ -587,7 +598,6 @@ export {
   packSignature,
   getDeployArgs,
   getSmartAccount,
-  getSessionSmartAccount,
   getGuardianSmartAccount,
   signEip7702InitData,
   getEip7702InitCall,

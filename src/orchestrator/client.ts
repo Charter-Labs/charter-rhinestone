@@ -1,4 +1,4 @@
-import { type Address, zeroAddress } from 'viem'
+import type { Address } from 'viem'
 import {
   AuthenticationRequiredError,
   BadRequestError,
@@ -24,6 +24,8 @@ import {
   UnsupportedTokenError,
 } from './error'
 import type {
+  AccountType,
+  Execution,
   IntentCost,
   IntentInput,
   IntentOpStatus,
@@ -100,23 +102,18 @@ export class Orchestrator {
   }
 
   async getMaxTokenAmount(
-    userAddress: Address,
+    account: {
+      address: Address
+      accountType: AccountType
+      setupOps: Pick<Execution, 'to' | 'data'>[]
+    },
     destinationChainId: number,
     destinationTokenAddress: Address,
     destinationGasUnits: bigint,
     sponsored: boolean,
   ): Promise<bigint> {
     const intentCost = await this.getIntentCost({
-      account: {
-        address: userAddress,
-        accountType: 'ERC7579',
-        setupOps: [
-          {
-            to: zeroAddress,
-            data: '0x',
-          },
-        ],
-      },
+      account,
       destinationExecutions: [],
       destinationChainId,
       destinationGasUnits,
@@ -147,9 +144,7 @@ export class Orchestrator {
     }
     const tokenAmount = tokenReceived.destinationAmount
     if (BigInt(tokenAmount) < 0n) {
-      throw new Error(
-        `Balance not available. Make sure the account is deployed`,
-      )
+      return 0n
     }
     // `sponsorSettings` is not taken into account in the API response for now
     // As a workaround, we use the `amountSpent` if the transaction is sponsored

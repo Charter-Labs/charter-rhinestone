@@ -36,20 +36,8 @@ import {
   MODULE_TYPE_ID_VALIDATOR,
   type Module,
 } from '../modules/common'
-import {
-  encodeSmartSessionSignature,
-  getMockSignature,
-  getPermissionId,
-  SMART_SESSION_MODE_ENABLE,
-  SMART_SESSION_MODE_USE,
-} from '../modules/validators'
-import type { EnableSessionData } from '../modules/validators/smart-sessions'
-import type {
-  KernelAccount,
-  OwnerSet,
-  RhinestoneAccountConfig,
-  Session,
-} from '../types'
+import { getMockSignature } from '../modules/validators'
+import type { KernelAccount, OwnerSet, RhinestoneAccountConfig } from '../types'
 import {
   AccountConfigurationNotSupportedError,
   Eip712DomainNotAvailableError,
@@ -72,6 +60,9 @@ const KERNEL_VERSION = '0.3.3'
 
 function getDeployArgs(config: RhinestoneAccountConfig) {
   if (config.initData) {
+    if (!('factory' in config.initData)) {
+      return null
+    }
     const factoryData = decodeFunctionData({
       abi: parseAbi([
         'function deployWithFactory(address factory,bytes createData,bytes32 salt)',
@@ -153,7 +144,11 @@ function getDeployArgs(config: RhinestoneAccountConfig) {
 }
 
 function getAddress(config: RhinestoneAccountConfig) {
-  const { salt, initializationCallData } = getDeployArgs(config)
+  const deployArgs = getDeployArgs(config)
+  if (!deployArgs) {
+    throw new Error('Cannot derive address: deploy args not available')
+  }
+  const { salt, initializationCallData } = deployArgs
   const actualSalt = keccak256(concat([initializationCallData, salt]))
   return getContractAddress({
     from: KERNEL_FACTORY_ADDRESS,
@@ -308,56 +303,6 @@ async function getSmartAccount(
   )
 }
 
-async function getSessionSmartAccount(
-  client: PublicClient,
-  address: Address,
-  session: Session,
-  validatorAddress: Address,
-  enableData: EnableSessionData | null,
-  sign: (hash: Hex) => Promise<Hex>,
-) {
-  return await getBaseSmartAccount(
-    address,
-    client,
-    validatorAddress,
-    'validator',
-    async () => {
-      const dummyOpSignature = getMockSignature(session.owners)
-
-      if (enableData) {
-        return encodeSmartSessionSignature(
-          SMART_SESSION_MODE_ENABLE,
-          getPermissionId(session),
-          dummyOpSignature,
-          enableData,
-        )
-      }
-      return encodeSmartSessionSignature(
-        SMART_SESSION_MODE_USE,
-        getPermissionId(session),
-        dummyOpSignature,
-      )
-    },
-    async (hash) => {
-      const signature = await sign(hash)
-
-      if (enableData) {
-        return encodeSmartSessionSignature(
-          SMART_SESSION_MODE_ENABLE,
-          getPermissionId(session),
-          signature,
-          enableData,
-        )
-      }
-      return encodeSmartSessionSignature(
-        SMART_SESSION_MODE_USE,
-        getPermissionId(session),
-        signature,
-      )
-    },
-  )
-}
-
 async function getGuardianSmartAccount(
   client: PublicClient,
   address: Address,
@@ -462,7 +407,6 @@ export {
   getAddress,
   getDeployArgs,
   getSmartAccount,
-  getSessionSmartAccount,
   getGuardianSmartAccount,
   packSignature,
   wrapMessageHash,

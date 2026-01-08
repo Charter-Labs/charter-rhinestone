@@ -1,7 +1,6 @@
 import type { Account, Address, Chain, Hex } from 'viem'
 import type { WebAuthnAccount } from 'viem/account-abstraction'
 import type { ModuleType } from './modules/common'
-import type { EnableSessionData } from './modules/validators/smart-sessions'
 import type { SettlementLayer } from './orchestrator/types'
 
 type AccountType = 'safe' | 'nexus' | 'kernel' | 'startale' | 'passport' | 'eoa'
@@ -89,15 +88,25 @@ type ProviderConfig =
       urls: Record<number, string>
     }
 
-interface BundlerConfig {
-  type: 'pimlico' | 'biconomy'
-  apiKey: string
-}
+type BundlerConfig =
+  | {
+      type: 'pimlico' | 'biconomy'
+      apiKey: string
+    }
+  | {
+      type: 'custom'
+      url: string | Record<number, string>
+    }
 
-interface PaymasterConfig {
-  type: 'pimlico' | 'biconomy'
-  apiKey: string
-}
+type PaymasterConfig =
+  | {
+      type: 'pimlico' | 'biconomy'
+      apiKey: string
+    }
+  | {
+      type: 'custom'
+      url: string | Record<number, string>
+    }
 
 type OwnerSet =
   | OwnableValidatorConfig
@@ -169,19 +178,15 @@ interface Action {
   policies?: [Policy, ...Policy[]]
 }
 
+interface SessionInput {
+  owners: OwnerSet
+  actions: Action[]
+}
+
 interface Session {
   owners: OwnerSet
-  chain?: Chain
-  policies?: [Policy, ...Policy[]]
-  actions?: [Action, ...Action[]]
-  signing?: {
-    allowedContent: {
-      domainSeparator: string
-      contentName: string[]
-    }[]
-    policies?: [Policy, ...Policy[]]
-  }
-  salt?: Hex
+  chain: Chain
+  actions: Action[]
 }
 
 interface Recovery {
@@ -200,16 +205,24 @@ interface ModuleInput {
 interface RhinestoneAccountConfig {
   account?: AccountProviderConfig
   owners?: OwnerSet
-  sessions?: Session[]
+  experimental_sessions?: {
+    enabled: boolean
+    module?: Address
+    compatibilityFallback?: Address
+  }
   recovery?: Recovery
   eoa?: Account
   modules?: ModuleInput[]
-  initData?: {
-    address: Address
-    factory: Address
-    factoryData: Hex
-    intentExecutorInstalled: boolean
-  }
+  initData?:
+    | {
+        address: Address
+        factory: Address
+        factoryData: Hex
+        intentExecutorInstalled: boolean
+      }
+    | {
+        address: Address
+      }
 }
 
 interface RhinestoneSDKConfig {
@@ -302,9 +315,8 @@ type OwnerSignerSet =
     }
 
 interface SessionSignerSet {
-  type: 'session'
+  type: 'experimental_session'
   session: Session
-  enableData?: EnableSessionData
 }
 
 interface GuardiansSignerSet {
@@ -314,13 +326,21 @@ interface GuardiansSignerSet {
 
 type SignerSet = OwnerSignerSet | SessionSignerSet | GuardiansSignerSet
 
+type Sponsorship =
+  | boolean
+  | {
+      gas: boolean
+      bridging: boolean
+      swaps: boolean
+    }
+
 interface BaseTransaction {
   calls?: CallInput[]
   tokenRequests?: TokenRequest[]
   recipient?: RhinestoneAccountConfig | Address
   gasLimit?: bigint
   signers?: SignerSet
-  sponsored?: boolean
+  sponsored?: Sponsorship
   eip7702InitSignature?: Hex
   sourceAssets?: SourceAssetInput
   feeAsset?: Address | TokenSymbol
@@ -375,6 +395,7 @@ export type {
   CallInput,
   CallResolveContext,
   Call,
+  Sponsorship,
   TokenRequest,
   SourceAssetInput,
   OwnerSet,
@@ -383,6 +404,7 @@ export type {
   WebauthnValidatorConfig,
   MultiFactorValidatorConfig,
   SignerSet,
+  SessionInput,
   Session,
   Recovery,
   ModuleType,

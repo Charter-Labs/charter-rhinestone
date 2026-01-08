@@ -1,5 +1,115 @@
 # @rhinestone/sdk
 
+## 1.1.1
+
+### Patch Changes
+
+- 01e44d3: Enable calls for EOAs
+
+## 1.1.0
+
+### Minor Changes
+
+- c394ecb: Preliminary support for smart session emissary module (unscoped session keys for cross-chain intents).
+
+## 1.0.43
+
+### Patch Changes
+
+- f163a3c: contract remediation changes
+
+## 1.0.42
+
+### Patch Changes
+
+- 40f87b7: Custom bundler send transaction condition
+
+## 1.0.41
+
+### Patch Changes
+
+- 6e0f02c: Allow bundler and paymaster config to support custom types
+
+## 1.0.40
+
+### Patch Changes
+
+- f391e91: Support existing Nexus accounts created with SDK V1
+
+## 1.0.39
+
+### Patch Changes
+
+- 144256a: Add `getTransactionMessages` to expose the typed data signed by the user.
+
+## 1.0.38
+
+### Patch Changes
+
+- ca31bf8: add gnosis and sonic
+
+## 1.0.37
+
+### Patch Changes
+
+- e9b8795: add token decimals helper
+
+## 1.0.36
+
+### Patch Changes
+
+- 4d9900f: Expose more modules
+
+## 1.0.35
+
+### Patch Changes
+
+- 75b6919: Allow module address overrides for smart sessions
+- 734b0fc: Add utility to deploy V0-compatible accounts
+
+## 1.0.34
+
+### Patch Changes
+
+- 7f171c7: Use intent's `element` chain instead of `target` for EIP-712 signing
+
+## 1.0.33
+
+### Patch Changes
+
+- 93723a5: Switch chains during signing
+- b93ce99: Fix “max amount” estimation for undeployed accounts
+
+## 1.0.32
+
+### Patch Changes
+
+- d42a5ac: Sponsorship types
+
+## 1.0.31
+
+### Patch Changes
+
+- 53c915e: Fix error in `toViewOnlyAccount` util
+
+## 1.0.30
+
+### Patch Changes
+
+- 5e7d4f5: Account deployment action
+
+## 1.0.29
+
+### Patch Changes
+
+- a27b03a: Add support for deployAccountsForOwners
+
+## 1.0.28
+
+### Patch Changes
+
+- 1140dbd: Allow initiate existing accounts with address only
+
 ## 1.0.27
 
 ### Patch Changes

@@ -6,14 +6,17 @@ import type {
   SignableMessage,
   SignedAuthorizationList,
   TypedData,
+  TypedDataDefinition,
   Account,
 } from 'viem'
 import type { UserOperationReceipt } from 'viem/account-abstraction'
 import {
   checkAddress,
   deploy as deployInternal,
+  FactoryArgsNotAvailableError,
   getAccountProvider,
   getAddress as getAddressInternal,
+  getInitCode,
   isDeployed as isDeployedInternal,
   OwnersFieldRequiredError,
   setup as setupInternal,
@@ -21,6 +24,7 @@ import {
   deployStandaloneWithEoa as deployStandaloneWithEoaInternal,
 } from './accounts'
 import { walletClientToAccount, wrapParaAccount } from './accounts/walletClient'
+import { deployAccountsForOwners } from './actions/deployment'
 import {
   getIntentStatus as getIntentStatusInternal,
   getMaxSpendableAmount as getMaxSpendableAmountInternal,
@@ -43,10 +47,7 @@ import {
   signPermit2Sequential,
 } from './execution/permit2'
 import {
-  getSessionDetails as getSessionDetailsInternal,
-  type SessionDetails,
-} from './execution/smart-session'
-import {
+  getTransactionMessages as getTransactionMessagesInternal,
   type IntentRoute,
   type PreparedTransactionData,
   type PreparedUserOperationData,
@@ -64,13 +65,16 @@ import {
 } from './execution/utils'
 import {
   getOwners as getOwnersInternal,
+  getSessionDetails as getSessionDetailsInternal,
   getValidators as getValidatorsInternal,
 } from './modules'
+import type { SessionDetails } from './modules/validators/smart-sessions'
 import {
   type ApprovalRequired,
   getAllSupportedChainsAndTokens,
   getSupportedTokens,
   getTokenAddress,
+  getTokenDecimals,
   type IntentCost,
   type IntentInput,
   type IntentOp,
@@ -120,10 +124,18 @@ interface RhinestoneAccount {
     config: RhinestoneAccountConfig,
     deployer: Account,
   ) => Promise<void>
+  getInitData(): {
+    factory: Address
+    factoryData: Hex
+  }
   signEip7702InitData: () => Promise<Hex>
   prepareTransaction: (
     transaction: Transaction,
   ) => Promise<PreparedTransactionData>
+  getTransactionMessages: (preparedTransaction: PreparedTransactionData) => {
+    origin: TypedDataDefinition[]
+    destination: TypedDataDefinition
+  }
   signTransaction: (
     preparedTransaction: PreparedTransactionData,
   ) => Promise<SignedTransactionData>
@@ -177,11 +189,8 @@ interface RhinestoneAccount {
     gasUnits: bigint,
     sponsored?: boolean,
   ) => Promise<bigint>
-  getSessionDetails: (
+  experimental_getSessionDetails: (
     sessions: Session[],
-    sessionIndex: number,
-    initialNonces?: bigint[],
-    signature?: Hex,
   ) => Promise<SessionDetails>
   getOwners: (chain: Chain) => Promise<{
     accounts: Address[]
@@ -240,6 +249,27 @@ async function createRhinestoneAccount(
   }
 
   /**
+   * Get the account initialization data. Used for deploying the account onchain.
+   * @returns factory address and factory data
+   */
+  function getInitData(): {
+    factory: Address
+    factoryData: Hex
+  } {
+    const initData = getInitCode(config)
+    if (!initData) {
+      throw new FactoryArgsNotAvailableError()
+    }
+    if (!('factory' in initData)) {
+      throw new FactoryArgsNotAvailableError()
+    }
+    return {
+      factory: initData.factory,
+      factoryData: initData.factoryData,
+    }
+  }
+
+  /**
    * Prepare and sign the EIP-7702 account initialization data
    * @returns init data signature
    */
@@ -262,6 +292,17 @@ async function createRhinestoneAccount(
    */
   function prepareTransaction(transaction: Transaction) {
     return prepareTransactionInternal(config, transaction)
+  }
+
+  /**
+   * Get the transaction typed data message to sign
+   * @param preparedTransaction Prepared transaction data
+   * @see {@link prepareTransaction} to prepare the transaction data for signing
+   */
+  function getTransactionMessages(
+    preparedTransaction: PreparedTransactionData,
+  ) {
+    return getTransactionMessagesInternal(config, preparedTransaction)
   }
 
   /**
@@ -471,19 +512,9 @@ async function createRhinestoneAccount(
     return getValidatorsInternal(accountType, account, chain, config.provider)
   }
 
-  function getSessionDetails(
-    sessions: Session[],
-    sessionIndex: number,
-    initialNonces?: bigint[],
-    signature?: Hex,
-  ) {
-    return getSessionDetailsInternal(
-      config,
-      sessions,
-      sessionIndex,
-      initialNonces,
-      signature,
-    )
+  function experimental_getSessionDetails(sessions: Session[]) {
+    const account = getAddress()
+    return getSessionDetailsInternal(account, sessions)
   }
 
   /**
@@ -507,6 +538,7 @@ async function createRhinestoneAccount(
     deployStandaloneWithEoa,
     signEip7702InitData,
     prepareTransaction,
+    getTransactionMessages,
     signTransaction,
     signAuthorizations,
     signMessage,
@@ -521,10 +553,11 @@ async function createRhinestoneAccount(
     getAddress,
     getPortfolio,
     getMaxSpendableAmount,
-    getSessionDetails,
     getOwners,
     getValidators,
+    experimental_getSessionDetails,
     checkERC20Allowance,
+    getInitData,
   }
 }
 
@@ -565,11 +598,14 @@ class RhinestoneSDK {
 
 export {
   RhinestoneSDK,
+  createRhinestoneAccount,
+  deployAccountsForOwners,
   walletClientToAccount,
   wrapParaAccount,
   // Registry functions
   getSupportedTokens,
   getTokenAddress,
+  getTokenDecimals,
   getAllSupportedChainsAndTokens,
   // Compatibility export for admin service
   deployStandaloneWithEoaInternal as deployStandaloneWithEoa,

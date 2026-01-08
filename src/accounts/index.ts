@@ -23,21 +23,15 @@ import {
   type UserOperationResult,
   waitForExecution,
 } from '../execution'
-import { enableSmartSession } from '../execution/smart-session'
 import { getIntentExecutor, getSetup } from '../modules'
 import type { Module } from '../modules/common'
-import {
-  getOwnerValidator,
-  getSmartSessionValidator,
-} from '../modules/validators'
+import { getOwnerValidator } from '../modules/validators'
 import { getSocialRecoveryValidator } from '../modules/validators/core'
-import type { EnableSessionData } from '../modules/validators/smart-sessions'
 import type {
   AccountProviderConfig,
   Call,
   OwnerSet,
   RhinestoneConfig,
-  Session,
   SignerSet,
 } from '../types'
 import {
@@ -46,6 +40,7 @@ import {
   Eip712DomainNotAvailableError,
   Eip7702AccountMustHaveEoaError,
   Eip7702NotSupportedForAccountError,
+  EoaAccountMustHaveAccountError,
   EoaSigningMethodNotConfiguredError,
   EoaSigningNotSupportedError,
   ExistingEip7702AccountsNotSupportedError,
@@ -63,7 +58,6 @@ import {
   getEip712Domain as getKernelEip712Domain,
   getGuardianSmartAccount as getKernelGuardianSmartAccount,
   getInstallData as getKernelInstallData,
-  getSessionSmartAccount as getKernelSessionSmartAccount,
   getSmartAccount as getKernelSmartAccount,
   packSignature as packKernelSignature,
   wrapMessageHash as wrapKernelMessageHash,
@@ -76,7 +70,6 @@ import {
   getEip7702InitCall as getNexusEip7702InitCall,
   getGuardianSmartAccount as getNexusGuardianSmartAccount,
   getInstallData as getNexusInstallData,
-  getSessionSmartAccount as getNexusSessionSmartAccount,
   getSmartAccount as getNexusSmartAccount,
   packSignature as packNexusSignature,
   signEip7702InitData as signNexusEip7702InitData,
@@ -84,7 +77,6 @@ import {
 import {
   getAddress as getPassportAddress,
   getInstallData as getPassportInstallData,
-  getSessionSmartAccount as getPassportSessionSmartAccount,
   packSignature as packPassportSignature,
 } from './passport'
 import {
@@ -93,8 +85,8 @@ import {
   getEip712Domain as getSafeEip712Domain,
   getGuardianSmartAccount as getSafeGuardianSmartAccount,
   getInstallData as getSafeInstallData,
-  getSessionSmartAccount as getSafeSessionSmartAccount,
   getSmartAccount as getSafeSmartAccount,
+  getV0DeployArgs as getSafeV0DeployArgs,
   packSignature as packSafeSignature,
 } from './safe'
 import { convertOwnerSetToSignerSet } from './signing/common'
@@ -106,7 +98,6 @@ import {
   getEip712Domain as getStartaleEip712Domain,
   getGuardianSmartAccount as getStartaleGuardianSmartAccount,
   getInstallData as getStartaleInstallData,
-  getSessionSmartAccount as getStartaleSessionSmartAccount,
   getSmartAccount as getStartaleSmartAccount,
   packSignature as packStartaleSignature,
 } from './startale'
@@ -148,6 +139,18 @@ function getDeployArgs(config: RhinestoneConfig) {
   }
 }
 
+function getV0DeployArgs(config: RhinestoneConfig) {
+  const account = getAccountProvider(config)
+  switch (account.type) {
+    case 'safe': {
+      return getSafeV0DeployArgs(config)
+    }
+    default: {
+      throw new Error(`Unsupported account type: ${account.type}`)
+    }
+  }
+}
+
 function getInitCode(config: RhinestoneConfig) {
   if (is7702(config)) {
     return undefined
@@ -156,10 +159,31 @@ function getInitCode(config: RhinestoneConfig) {
   } else if (config.initData) {
     return config.initData
   } else {
-    const { factory, factoryData } = getDeployArgs(config)
-    if (!factory || !factoryData) {
+    const deployArgs = getDeployArgs(config)
+    if (!deployArgs) {
       throw new FactoryArgsNotAvailableError()
     }
+    const { factory, factoryData } = deployArgs
+    return {
+      factory,
+      factoryData,
+    }
+  }
+}
+
+function getV0InitCode(config: RhinestoneConfig) {
+  if (is7702(config)) {
+    return undefined
+  } else if (config.account?.type === 'eoa') {
+    return undefined
+  } else if (config.initData) {
+    return config.initData
+  } else {
+    const deployArgs = getV0DeployArgs(config)
+    if (!deployArgs) {
+      throw new FactoryArgsNotAvailableError()
+    }
+    const { factory, factoryData } = deployArgs
     return {
       factory,
       factoryData,
@@ -496,12 +520,14 @@ async function deploy(
   config: RhinestoneConfig,
   chain: Chain,
   params?: {
-    session?: Session
     sponsored?: boolean
   },
 ): Promise<boolean> {
   const account = getAccountProvider(config)
-
+  const deployArgs = getDeployArgs(config)
+  if (!deployArgs) {
+    throw new FactoryArgsNotAvailableError()
+  }
   if (account.type === 'eoa') {
     return false
   }
@@ -510,14 +536,19 @@ async function deploy(
   if (deployed) {
     return false
   }
-  const asUserOp = config.initData && !config.initData.intentExecutorInstalled
+  const intentExecutorInstalled =
+    'intentExecutorInstalled' in deployArgs
+      ? deployArgs.intentExecutorInstalled
+      : false
+  // Use bundler directly when:
+  // (account has initData and intent executor is not installed) || (custom bundler is configured)
+  const useCustomBundler = config.bundler?.type === 'custom'
+  const asUserOp =
+    (config.initData && !intentExecutorInstalled) || useCustomBundler
   if (asUserOp) {
     await deployWithBundler(chain, config)
   } else {
     await deployWithIntent(chain, config, params?.sponsored ?? false)
-  }
-  if (params?.session) {
-    await enableSmartSession(chain, config, params.session)
   }
   return true
 }
@@ -623,7 +654,11 @@ async function deployWithBundler(chain: Chain, config: RhinestoneConfig) {
   })
   const bundlerClient = getBundlerClient(config, publicClient)
   const smartAccount = await getSmartAccount(config, publicClient, chain)
-  const { factory, factoryData } = getDeployArgs(config)
+  const deployArgs = getDeployArgs(config)
+  if (!deployArgs) {
+    throw new FactoryArgsNotAvailableError()
+  }
+  const { factory, factoryData } = deployArgs
   const opHash = await bundlerClient.sendUserOperation({
     account: smartAccount,
     factory,
@@ -695,7 +730,11 @@ async function toErc6492Signature(
   if (!initCode) {
     throw new FactoryArgsNotAvailableError()
   }
-  const { factory, factoryData } = initCode
+  const deployArgs = getDeployArgs(config)
+  if (!deployArgs) {
+    throw new FactoryArgsNotAvailableError()
+  }
+  const { factory, factoryData } = deployArgs
   const magicBytes =
     '0x6492649264926492649264926492649264926492649264926492649264926492'
   return concat([
@@ -768,84 +807,6 @@ async function getSmartAccount(
         address,
         config.owners,
         ownerValidator.address,
-        signFn,
-      )
-    }
-  }
-}
-
-async function getSmartSessionSmartAccount(
-  config: RhinestoneConfig,
-  client: PublicClient,
-  chain: Chain,
-  session: Session,
-  enableData: EnableSessionData | null,
-) {
-  const address = getAddress(config)
-  const smartSessionValidator = getSmartSessionValidator(config)
-  if (!smartSessionValidator) {
-    throw new SmartSessionsNotEnabledError()
-  }
-  const signers: SignerSet = {
-    type: 'session',
-    session,
-    enableData: enableData || undefined,
-  }
-  const signFn = (hash: Hex) => signMessage(signers, chain, address, hash, true)
-
-  const account = getAccountProvider(config)
-  switch (account.type) {
-    case 'safe': {
-      return getSafeSessionSmartAccount(
-        client,
-        address,
-        session,
-        smartSessionValidator.address,
-        enableData,
-        signFn,
-      )
-    }
-    case 'nexus': {
-      const defaultValidatorAddress = getNexusDefaultValidatorAddress(
-        account.version,
-      )
-      return getNexusSessionSmartAccount(
-        client,
-        address,
-        session,
-        smartSessionValidator.address,
-        enableData,
-        signFn,
-        defaultValidatorAddress,
-      )
-    }
-    case 'kernel': {
-      return getKernelSessionSmartAccount(
-        client,
-        address,
-        session,
-        smartSessionValidator.address,
-        enableData,
-        signFn,
-      )
-    }
-    case 'passport': {
-      return getPassportSessionSmartAccount(
-        client,
-        address,
-        session,
-        smartSessionValidator.address,
-        enableData,
-        signFn,
-      )
-    }
-    case 'startale': {
-      return getStartaleSessionSmartAccount(
-        client,
-        address,
-        session,
-        smartSessionValidator.address,
-        enableData,
         signFn,
       )
     }
@@ -937,6 +898,7 @@ export {
   checkAddress,
   getAccountProvider,
   getInitCode,
+  getV0InitCode,
   signEip7702InitData,
   getEip7702InitCall,
   is7702,
@@ -945,7 +907,6 @@ export {
   setup,
   toErc6492Signature,
   getSmartAccount,
-  getSmartSessionSmartAccount,
   getGuardianSmartAccount,
   getPackedSignature,
   getTypedDataPackedSignature,
@@ -957,6 +918,7 @@ export {
   Eip712DomainNotAvailableError,
   Eip7702AccountMustHaveEoaError,
   Eip7702NotSupportedForAccountError,
+  EoaAccountMustHaveAccountError,
   EoaSigningMethodNotConfiguredError,
   EoaSigningNotSupportedError,
   ExistingEip7702AccountsNotSupportedError,
