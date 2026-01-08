@@ -701,7 +701,12 @@ async function deployStandaloneWithEoa(
   if (!initCode) {
     throw new FactoryArgsNotAvailableError()
   }
-  const { factory, factoryData } = initCode
+  
+  const deployArgs = getDeployArgs(config)
+  if (!deployArgs) {
+    throw new FactoryArgsNotAvailableError()
+  }
+  const { factory, factoryData } = deployArgs
 
   const walletClient = createWalletClient({
     account: deployer,
