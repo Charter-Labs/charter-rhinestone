@@ -27,10 +27,10 @@ import { walletClientToAccount, wrapParaAccount } from './accounts/walletClient'
 import { deployAccountsForOwners } from './actions/deployment'
 import {
   getIntentStatus as getIntentStatusInternal,
-  getMaxSpendableAmount as getMaxSpendableAmountInternal,
   getPortfolio as getPortfolioInternal,
   sendTransaction as sendTransactionInternal,
   sendUserOperation as sendUserOperationInternal,
+  splitIntents as splitIntentsInternal,
   type TransactionResult,
   type TransactionStatus,
   type UserOperationResult,
@@ -67,21 +67,26 @@ import {
   getOwners as getOwnersInternal,
   getSessionDetails as getSessionDetailsInternal,
   getValidators as getValidatorsInternal,
+  signEnableSession as signEnableSessionInternal,
 } from './modules'
-import type { SessionDetails } from './modules/validators/smart-sessions'
+import {
+  isSessionEnabled as isSessionEnabledInternal,
+  type SessionDetails,
+} from './modules/validators/smart-sessions'
 import {
   type ApprovalRequired,
   getAllSupportedChainsAndTokens,
   getSupportedTokens,
   getTokenAddress,
   getTokenDecimals,
-  type IntentCost,
   type IntentInput,
   type IntentOp,
   type IntentOpStatus,
   type Portfolio,
   type SettlementLayer,
   type SignedIntentOp,
+  type SplitIntentsInput,
+  type SplitIntentsResult,
   type TokenRequirements,
   type WrapRequired,
 } from './orchestrator'
@@ -183,15 +188,11 @@ interface RhinestoneAccount {
   ): Promise<UserOperationReceipt>
   getAddress: () => Address
   getPortfolio: (onTestnets?: boolean) => Promise<Portfolio>
-  getMaxSpendableAmount: (
-    chain: Chain,
-    tokenAddress: Address | TokenSymbol,
-    gasUnits: bigint,
-    sponsored?: boolean,
-  ) => Promise<bigint>
   experimental_getSessionDetails: (
     sessions: Session[],
   ) => Promise<SessionDetails>
+  experimental_isSessionEnabled: (session: Session) => Promise<boolean>
+  experimental_signEnableSession: (details: SessionDetails) => Promise<Hex>
   getOwners: (chain: Chain) => Promise<{
     accounts: Address[]
     threshold: number
@@ -470,28 +471,6 @@ async function createRhinestoneAccount(
   }
 
   /**
-   * Get the maximum spendable token amount on the target chain
-   * @param chain Target chain
-   * @param token Token address (on the target chain)
-   * @param gasUnits Gas cost estimate for the transaction execution
-   * @returns Maximum spendable amount in absolute units
-   */
-  function getMaxSpendableAmount(
-    chain: Chain,
-    token: Address | TokenSymbol,
-    gasUnits: bigint,
-    sponsored: boolean = false,
-  ) {
-    return getMaxSpendableAmountInternal(
-      config,
-      chain,
-      token,
-      gasUnits,
-      sponsored,
-    )
-  }
-
-  /**
    * Get account owners (ECDSA)
    * @param chain Chain to get the owners on
    * @returns Account owners
@@ -515,6 +494,15 @@ async function createRhinestoneAccount(
   function experimental_getSessionDetails(sessions: Session[]) {
     const account = getAddress()
     return getSessionDetailsInternal(account, sessions)
+  }
+
+  function experimental_isSessionEnabled(session: Session) {
+    const account = getAddress()
+    return isSessionEnabledInternal(account, config.provider, session)
+  }
+
+  function experimental_signEnableSession(details: SessionDetails) {
+    return signEnableSessionInternal(config, details)
   }
 
   /**
@@ -552,10 +540,11 @@ async function createRhinestoneAccount(
     waitForExecution,
     getAddress,
     getPortfolio,
-    getMaxSpendableAmount,
     getOwners,
     getValidators,
     experimental_getSessionDetails,
+    experimental_isSessionEnabled,
+    experimental_signEnableSession,
     checkERC20Allowance,
     getInitData,
   }
@@ -593,6 +582,10 @@ class RhinestoneSDK {
 
   getIntentStatus(intentId: bigint) {
     return getIntentStatusInternal(this.apiKey, this.endpointUrl, intentId)
+  }
+
+  splitIntents(input: SplitIntentsInput) {
+    return splitIntentsInternal(this.apiKey, this.endpointUrl, input)
   }
 }
 
@@ -644,13 +637,14 @@ export type {
   PreparedUserOperationData,
   SignedUserOperationData,
   UserOperationResult,
-  IntentCost,
   IntentInput,
   IntentOp,
   IntentOpStatus,
   IntentRoute,
   SettlementLayer,
   SignedIntentOp,
+  SplitIntentsInput,
+  SplitIntentsResult,
   Portfolio,
   TokenRequirements,
   WrapRequired,

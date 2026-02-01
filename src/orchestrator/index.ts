@@ -7,6 +7,7 @@ import {
   ConflictError,
   ForbiddenError,
   InsufficientBalanceError,
+  InsufficientLiquidityError,
   IntentNotFoundError,
   InternalServerError,
   InvalidApiKeyError,
@@ -42,7 +43,6 @@ import {
 } from './registry'
 import type {
   ApprovalRequired,
-  IntentCost,
   IntentInput,
   IntentOp,
   IntentOpStatus,
@@ -51,6 +51,8 @@ import type {
   Portfolio,
   SettlementLayer,
   SignedIntentOp,
+  SplitIntentsInput,
+  SplitIntentsResult,
   SupportedChain,
   TokenConfig,
   TokenRequirements,
@@ -74,7 +76,6 @@ function getOrchestrator(
 }
 
 export type {
-  IntentCost,
   IntentInput,
   IntentOp,
   IntentOpStatus,
@@ -82,6 +83,8 @@ export type {
   IntentRoute,
   SettlementLayer,
   SignedIntentOp,
+  SplitIntentsInput,
+  SplitIntentsResult,
   SupportedChain,
   TokenConfig,
   Portfolio,
@@ -105,6 +108,7 @@ export {
   ConflictError,
   ForbiddenError,
   InsufficientBalanceError,
+  InsufficientLiquidityError,
   InvalidApiKeyError,
   InvalidIntentSignatureError,
   NoPathFoundError,

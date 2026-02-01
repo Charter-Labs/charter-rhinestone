@@ -6,6 +6,7 @@ import {
   ConflictError,
   ForbiddenError,
   InsufficientBalanceError,
+  InsufficientLiquidityError,
   IntentNotFoundError,
   InternalServerError,
   InvalidApiKeyError,
@@ -24,9 +25,6 @@ import {
   UnsupportedTokenError,
 } from './error'
 import type {
-  AccountType,
-  Execution,
-  IntentCost,
   IntentInput,
   IntentOpStatus,
   IntentResult,
@@ -34,8 +32,21 @@ import type {
   Portfolio,
   PortfolioResponse,
   SignedIntentOp,
+  SplitIntentsInput,
+  SplitIntentsResult,
 } from './types'
 import { convertBigIntFields } from './utils'
+
+function parseTokenAmountsRecord(
+  record: Record<string, string>,
+): Record<Address, bigint> {
+  return Object.fromEntries(
+    Object.entries(record).map(([addr, amount]) => [
+      addr as Address,
+      BigInt(amount),
+    ]),
+  ) as Record<Address, bigint>
+}
 
 export class Orchestrator {
   private serverUrl: string
@@ -101,72 +112,68 @@ export class Orchestrator {
     return portfolio
   }
 
-  async getMaxTokenAmount(
-    account: {
-      address: Address
-      accountType: AccountType
-      setupOps: Pick<Execution, 'to' | 'data'>[]
-    },
-    destinationChainId: number,
-    destinationTokenAddress: Address,
-    destinationGasUnits: bigint,
-    sponsored: boolean,
-  ): Promise<bigint> {
-    const intentCost = await this.getIntentCost({
-      account,
-      destinationExecutions: [],
-      destinationChainId,
-      destinationGasUnits,
-      tokenRequests: [
-        {
-          tokenAddress: destinationTokenAddress,
-        },
-      ],
-      options: {
-        topupCompact: false,
-        sponsorSettings: {
-          gasSponsored: sponsored,
-          bridgeFeesSponsored: sponsored,
-          swapFeesSponsored: sponsored,
-        },
-      },
-    })
-    if (!intentCost.hasFulfilledAll) {
-      return 0n
-    }
-    const tokenReceived = intentCost.tokensReceived.find(
-      (token) =>
-        token.tokenAddress.toLowerCase() ===
-        destinationTokenAddress.toLowerCase(),
-    )
-    if (!tokenReceived) {
-      return 0n
-    }
-    const tokenAmount = tokenReceived.destinationAmount
-    if (BigInt(tokenAmount) < 0n) {
-      return 0n
-    }
-    // `sponsorSettings` is not taken into account in the API response for now
-    // As a workaround, we use the `amountSpent` if the transaction is sponsored
-    return sponsored
-      ? BigInt(tokenReceived.amountSpent)
-      : BigInt(tokenReceived.destinationAmount)
-  }
-
-  async getIntentCost(input: IntentInput): Promise<IntentCost> {
-    return await this.fetch(`${this.serverUrl}/intents/cost`, {
-      method: 'POST',
-      headers: this.getHeaders(),
-      body: JSON.stringify(convertBigIntFields(input)),
-    })
-  }
-
   async getIntentRoute(input: IntentInput): Promise<IntentRoute> {
     return await this.fetch(`${this.serverUrl}/intents/route`, {
       method: 'POST',
       headers: this.getHeaders(),
       body: JSON.stringify(convertBigIntFields(input)),
     })
+  }
+
+  async splitIntents(input: SplitIntentsInput): Promise<SplitIntentsResult> {
+    const response = await fetch(`${this.serverUrl}/intents/split`, {
+      method: 'POST',
+      headers: this.getHeaders(),
+      body: JSON.stringify(
+        convertBigIntFields({
+          chainId: input.chain.id,
+          tokens: input.tokens,
+          settlementLayers: input.settlementLayers,
+        }),
+      ),
+    })
+
+    if (response.ok) {
+      const json = await response.json()
+      return {
+        intents: (json.intents as Record<string, string>[]).map(
+          parseTokenAmountsRecord,
+        ),
+      }
+    }
+
+    let errorData: any = {}
+    try {
+      errorData = await response.json()
+    } catch {
+      try {
+        const text = await response.text()
+        errorData = { message: text }
+      } catch {}
+    }
+
+    if (
+      response.status === 422 &&
+      errorData.error === 'INSUFFICIENT_LIQUIDITY'
+    ) {
+      throw new InsufficientLiquidityError({
+        availableIntents: (
+          errorData.availableIntents as Record<string, string>[]
+        ).map(parseTokenAmountsRecord),
+        unfillable: parseTokenAmountsRecord(errorData.unfillable),
+        traceId: errorData.traceId,
+        statusCode: 422,
+      })
+    }
+
+    this.parseError({
+      response: {
+        status: response.status,
+        data: errorData,
+        headers: {},
+      },
+    })
+    throw new OrchestratorError({ message: 'Unexpected error' })
   }
 
   async submitIntent(

@@ -6,7 +6,7 @@ import type {
   SupportedOPStackTestnet,
   SupportedTestnet,
 } from '@rhinestone/shared-configs'
-import type { Address, Hex } from 'viem'
+import type { Address, Chain, Hex } from 'viem'
 
 type SupportedTokenSymbol = 'ETH' | 'WETH' | 'USDC' | 'USDT'
 type SupportedToken = SupportedTokenSymbol | Address
@@ -33,6 +33,7 @@ type IntentStatus =
 type AccountAccessListLegacy = {
   chainId: number
   tokenAddress: Address
+  amount?: bigint
 }[]
 
 type MappedChainTokenAccessList = {
@@ -74,11 +75,29 @@ type SettlementLayer =
 
 type FundingMethod = 'COMPACT' | 'PERMIT2' | 'NO_FUNDING'
 
+const SIG_MODE_EMISSARY = 0
+const SIG_MODE_ERC1271 = 1
+const SIG_MODE_EMISSARY_ERC1271 = 2
+const SIG_MODE_ERC1271_EMISSARY = 3
+const SIG_MODE_EMISSARY_EXECUTION = 4
+const SIG_MODE_EMISSARY_EXECUTION_ERC1271 = 5
+const SIG_MODE_ERC1271_EMISSARY_EXECUTION = 6
+
+type SignatureMode =
+  | typeof SIG_MODE_EMISSARY
+  | typeof SIG_MODE_ERC1271
+  | typeof SIG_MODE_EMISSARY_ERC1271
+  | typeof SIG_MODE_ERC1271_EMISSARY
+  | typeof SIG_MODE_EMISSARY_EXECUTION
+  | typeof SIG_MODE_EMISSARY_EXECUTION_ERC1271
+  | typeof SIG_MODE_ERC1271_EMISSARY_EXECUTION
+
 interface IntentOptions {
   topupCompact: boolean
   feeToken?: Address | SupportedTokenSymbol
   sponsorSettings?: SponsorSettings
   settlementLayers?: SettlementLayer[]
+  signatureMode?: SignatureMode
 }
 
 interface SponsorSettings {
@@ -294,8 +313,10 @@ interface IntentResult {
   }
 }
 
+type OriginSignature = Hex | { notarizedClaimSig: Hex; preClaimSig: Hex }
+
 type SignedIntentOp = IntentOp & {
-  originSignatures: Hex[]
+  originSignatures: OriginSignature[]
   destinationSignature: Hex
   signedAuthorizations?: readonly {
     chainId: number
@@ -333,6 +354,16 @@ export type OPNetworkParams =
   | {
       estimatedCalldataSize: number
     }
+
+interface SplitIntentsInput {
+  chain: Chain
+  tokens: Record<Address, bigint>
+  settlementLayers?: SettlementLayer[]
+}
+
+interface SplitIntentsResult {
+  intents: Record<Address, bigint>[]
+}
 
 interface IntentOpStatus {
   status: IntentStatus
@@ -379,13 +410,17 @@ export type {
   SignedIntentOp,
   IntentOpStatus,
   IntentResult,
+  SplitIntentsInput,
+  SplitIntentsResult,
   PortfolioTokenResponse,
   PortfolioResponse,
   Portfolio,
   PortfolioToken,
   Execution,
+  AccountAccessList,
   MappedChainTokenAccessList,
   UnmappedChainTokenAccessList,
+  OriginSignature,
   TokenRequirements,
   WrapRequired,
   ApprovalRequired,
@@ -398,4 +433,11 @@ export {
   INTENT_STATUS_COMPLETED,
   INTENT_STATUS_FILLED,
   INTENT_STATUS_PRECONFIRMED,
+  SIG_MODE_EMISSARY,
+  SIG_MODE_ERC1271,
+  SIG_MODE_EMISSARY_ERC1271,
+  SIG_MODE_ERC1271_EMISSARY,
+  SIG_MODE_EMISSARY_EXECUTION,
+  SIG_MODE_EMISSARY_EXECUTION_ERC1271,
+  SIG_MODE_ERC1271_EMISSARY_EXECUTION,
 }

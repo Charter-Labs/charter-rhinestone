@@ -173,20 +173,18 @@ type Policy =
   | ValueLimitPolicy
 
 interface Action {
-  target: Address
-  selector: Hex
+  target?: Address
+  selector?: Hex
   policies?: [Policy, ...Policy[]]
 }
 
 interface SessionInput {
   owners: OwnerSet
-  actions: Action[]
+  actions?: Action[]
 }
 
-interface Session {
-  owners: OwnerSet
+interface Session extends SessionInput {
   chain: Chain
-  actions: Action[]
 }
 
 interface Recovery {
@@ -272,16 +270,31 @@ interface Call {
   value: bigint
 }
 
-interface TokenRequest {
+interface TokenRequestWithAmount {
   address: Address | TokenSymbol
   amount: bigint
 }
 
-type SourceAssetInput =
-  | (Address | TokenSymbol)[]
-  | {
-      [chainId in number]?: (Address | TokenSymbol)[]
-    }
+interface TokenRequestWithoutAmount {
+  address: Address | TokenSymbol
+  amount?: undefined
+}
+
+type TokenRequest = TokenRequestWithAmount | TokenRequestWithoutAmount
+
+type TokenRequests = [TokenRequestWithoutAmount] | TokenRequestWithAmount[]
+
+export type SimpleTokenList = (Address | TokenSymbol)[]
+
+export type ChainTokenMap = Record<number, SimpleTokenList>
+
+export type ExactInputConfig = {
+  chain: Chain
+  address: Address | TokenSymbol
+  amount?: bigint
+}
+
+type SourceAssetInput = SimpleTokenList | ChainTokenMap | ExactInputConfig[]
 
 type OwnerSignerSet =
   | {
@@ -314,9 +327,20 @@ type OwnerSignerSet =
       module?: Address
     }
 
+interface SessionEnableData {
+  userSignature: Hex
+  hashesAndChainIds: {
+    chainId: bigint
+    sessionDigest: Hex
+  }[]
+  sessionToEnableIndex: number
+}
+
 interface SessionSignerSet {
   type: 'experimental_session'
   session: Session
+  verifyExecutions?: boolean
+  enableData?: SessionEnableData
 }
 
 interface GuardiansSignerSet {
@@ -336,7 +360,7 @@ type Sponsorship =
 
 interface BaseTransaction {
   calls?: CallInput[]
-  tokenRequests?: TokenRequest[]
+  tokenRequests?: TokenRequests
   recipient?: RhinestoneAccountConfig | Address
   gasLimit?: bigint
   signers?: SignerSet
@@ -397,6 +421,7 @@ export type {
   Call,
   Sponsorship,
   TokenRequest,
+  TokenRequests,
   SourceAssetInput,
   OwnerSet,
   OwnableValidatorConfig,
@@ -405,6 +430,7 @@ export type {
   MultiFactorValidatorConfig,
   SignerSet,
   SessionInput,
+  SessionEnableData,
   Session,
   Recovery,
   ModuleType,

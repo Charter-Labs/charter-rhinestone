@@ -3,7 +3,7 @@ import type { UserOperationReceipt } from 'viem/_types/account-abstraction'
 import { base, baseSepolia } from 'viem/chains'
 import { deploy, getAddress } from '../accounts'
 import { createTransport, getBundlerClient } from '../accounts/utils'
-import type { IntentOpStatus } from '../orchestrator'
+import type { IntentOpStatus, SplitIntentsInput } from '../orchestrator'
 import {
   INTENT_STATUS_COMPLETED,
   INTENT_STATUS_FAILED,
@@ -12,7 +12,7 @@ import {
   isRateLimited,
   isRetryable,
 } from '../orchestrator'
-import { getChainById, resolveTokenAddress } from '../orchestrator/registry'
+import { getChainById } from '../orchestrator/registry'
 import type { SettlementLayer } from '../orchestrator/types'
 import type {
   CalldataInput,
@@ -38,7 +38,6 @@ import {
 } from './error'
 import type { TransactionResult, UserOperationResult } from './utils'
 import {
-  getIntentAccount,
   getOrchestratorByChain,
   getTokenRequests,
   getValidatorAccount,
@@ -242,6 +241,7 @@ async function sendTransactionAsIntent(
     feeAsset,
     lockFunds,
     undefined,
+    signers,
   )
   if (!intentRoute) {
     throw new OrderPathRequiredForIntentsError()
@@ -249,6 +249,7 @@ async function sendTransactionAsIntent(
   const { originSignatures, destinationSignature } = await signIntent(
     config,
     intentRoute.intentOp,
+    targetChain,
     signers,
   )
   const authorizations = config.eoa
@@ -290,7 +291,9 @@ async function waitForExecution(
         const now = Date.now()
         if (now - startTs >= POLL_MAX_WAIT_MS) {
           throw new IntentStatusTimeoutError({
-            context: { waitedMs: now - startTs },
+            context: {
+              intentId: result.id.toString(),
+            },
           })
         }
         const orchestrator = getOrchestratorByChain(
@@ -341,7 +344,12 @@ async function waitForExecution(
         }
       }
       if (intentStatus.status === INTENT_STATUS_FAILED) {
-        throw new IntentFailedError()
+        const intentId = result.id.toString()
+        throw new IntentFailedError({
+          context: {
+            intentId,
+          },
+        })
       }
       return {
         fill: {
@@ -370,29 +378,6 @@ async function waitForExecution(
       return receipt
     }
   }
-}
-
-async function getMaxSpendableAmount(
-  config: RhinestoneConfig,
-  chain: Chain,
-  token: Address | TokenSymbol,
-  gasUnits: bigint,
-  sponsored: boolean = false,
-): Promise<bigint> {
-  const orchestrator = getOrchestratorByChain(
-    chain.id,
-    config.apiKey,
-    config.endpointUrl,
-  )
-  const tokenAddress = resolveTokenAddress(token, chain.id)
-  const account = getIntentAccount(config, undefined, undefined)
-  return orchestrator.getMaxTokenAmount(
-    account,
-    chain.id,
-    tokenAddress,
-    gasUnits,
-    sponsored,
-  )
 }
 
 async function getPortfolio(config: RhinestoneConfig, onTestnets: boolean) {
@@ -432,15 +417,28 @@ async function getIntentStatus(
   }
 }
 
+async function splitIntents(
+  apiKey: string | undefined,
+  endpointUrl: string | undefined,
+  input: SplitIntentsInput,
+) {
+  const orchestrator = getOrchestratorByChain(
+    input.chain.id,
+    apiKey,
+    endpointUrl,
+  )
+  return orchestrator.splitIntents(input)
+}
+
 export {
   sendTransaction,
   sendTransactionInternal,
   sendUserOperation,
   sendUserOperationInternal,
   waitForExecution,
-  getMaxSpendableAmount,
   getPortfolio,
   getIntentStatus,
+  splitIntents,
   // Errors
   isExecutionError,
   ExecutionError,

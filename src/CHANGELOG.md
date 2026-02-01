@@ -1,5 +1,73 @@
 # @rhinestone/sdk
 
+## 1.2.7
+
+### Patch Changes
+
+- 03bbe2b: Allow arbitrary tokens as origin assets
+- ba76c90: add split intents function
+- 496f3c0: bump viem dependency to 2.40.1
+
+## 1.2.6
+
+### Patch Changes
+
+- 588ca01: latest shared configs
+
+## 1.2.5
+
+### Patch Changes
+
+- 8be0ba1: Remove 7702 defensive check from isDeployed function
+- 292c270: Remove cost endpoint and max amount util from SDK
+
+## 1.2.4
+
+### Patch Changes
+
+- 38965d0: Add SSX module actions and experimental `isSessionEnabled` function
+
+## 1.2.3
+
+### Patch Changes
+
+- f492c7d: Fix enabling smart sessions with a signature when making a cross-chain transaction
+
+## 1.2.2
+
+### Patch Changes
+
+- 895d168: Allow single token request with no amount
+
+## 1.2.1
+
+### Patch Changes
+
+- 64c0fc0: Fix signature mode for non-"smart session" flows
+- 6c7813c: Fix session data signing for undeployed accounts
+
+## 1.2.0
+
+### Minor Changes
+
+- 26b2b3e: Enable exact input on access list
+
+### Patch Changes
+
+- eb6b4e8: Enable sessions via signature
+
+## 1.1.3
+
+### Patch Changes
+
+- 88fec05: Update yeet shared config
+
+## 1.1.2
+
+### Patch Changes
+
+- 3932774: Override default signature mode
+
 ## 1.1.1
 
 ### Patch Changes

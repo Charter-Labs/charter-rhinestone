@@ -33,10 +33,11 @@ import {
   FactoryArgsNotAvailableError,
   getAddress,
   getEip712Domain,
+  getEip1271Signature,
   getEip7702InitCall,
+  getEmissarySignature,
   getGuardianSmartAccount,
   getInitCode,
-  getPackedSignature,
   getSmartAccount,
   getTypedDataPackedSignature,
   is7702,
@@ -77,21 +78,25 @@ import {
   isTestnet,
   resolveTokenAddress,
 } from '../orchestrator/registry'
-import type {
-  MappedChainTokenAccessList,
-  Account as OrchestratorAccount,
-  SettlementLayer,
-  SupportedChain,
-  UnmappedChainTokenAccessList,
+import {
+  type AccountAccessList,
+  type Account as OrchestratorAccount,
+  type OriginSignature,
+  type SettlementLayer,
+  SIG_MODE_EMISSARY_EXECUTION_ERC1271,
+  SIG_MODE_ERC1271_EMISSARY,
+  type SupportedChain,
 } from '../orchestrator/types'
 import type {
   AccountProviderConfig,
   Call,
   CalldataInput,
   CallInput,
+  ExactInputConfig,
   RhinestoneAccountConfig,
   RhinestoneConfig,
   SignerSet,
+  SimpleTokenList,
   SourceAssetInput,
   Sponsorship,
   TokenRequest,
@@ -129,7 +134,7 @@ interface PreparedUserOperationData {
 }
 
 interface SignedTransactionData extends PreparedTransactionData {
-  originSignatures: Hex[]
+  originSignatures: OriginSignature[]
   destinationSignature: Hex
 }
 
@@ -181,6 +186,7 @@ async function prepareTransaction(
     feeAsset,
     lockFunds,
     account,
+    signers,
   )
 
   return {
@@ -251,9 +257,14 @@ async function signTransaction(
 ): Promise<SignedTransactionData> {
   const { signers } = getTransactionParams(preparedTransaction.transaction)
   const intentRoute = preparedTransaction.intentRoute
+  const targetChain =
+    'targetChain' in preparedTransaction.transaction
+      ? preparedTransaction.transaction.targetChain
+      : preparedTransaction.transaction.chain
   const { originSignatures, destinationSignature } = await signIntent(
     config,
     intentRoute.intentOp,
+    targetChain,
     signers,
   )
 
@@ -306,7 +317,7 @@ async function signMessage(
   const isRoot = validator.address === ownerValidator.address
 
   const hash = hashMessage(message)
-  const signature = await getPackedSignature(
+  const signature = await getEip1271Signature(
     config,
     signers,
     chain,
@@ -327,6 +338,9 @@ async function signTypedData<
   parameters: HashTypedDataParameters<typedData, primaryType>,
   chain: Chain,
   signers: SignerSet | undefined,
+  options?: {
+    skipErc6492?: boolean
+  },
 ) {
   const validator = getValidator(config, signers)
   if (!validator) {
@@ -358,7 +372,10 @@ async function signTypedData<
     },
     parameters,
   )
-  return await toErc6492Signature(config, signature, chain)
+  if (!options?.skipErc6492) {
+    return await toErc6492Signature(config, signature, chain)
+  }
+  return signature
 }
 
 async function signTypedDataWithSession<
@@ -665,6 +682,7 @@ async function prepareTransactionAsIntent(
         }[]
       }
     | undefined,
+  signers: SignerSet | undefined,
 ) {
   const calls = parseCalls(callInputs, targetChain.id)
   const accountAccessList = createAccountAccessList(sourceChains, sourceAssets)
@@ -689,6 +707,10 @@ async function prepareTransactionAsIntent(
 
   const intentAccount = getIntentAccount(config, eip7702InitSignature, account)
   const recipient = getRecipient(recipientInput)
+  const signatureMode =
+    signers?.type === 'experimental_session'
+      ? SIG_MODE_EMISSARY_EXECUTION_ERC1271
+      : SIG_MODE_ERC1271_EMISSARY
 
   const metaIntent: IntentInput = {
     destinationChainId: targetChain.id,
@@ -718,6 +740,7 @@ async function prepareTransactionAsIntent(
             }
         : undefined,
       settlementLayers,
+      signatureMode,
     },
   }
 
@@ -733,9 +756,10 @@ async function prepareTransactionAsIntent(
 async function signIntent(
   config: RhinestoneConfig,
   intentOp: IntentOp,
+  targetChain: Chain,
   signers?: SignerSet,
 ) {
-  const { origin } = getIntentMessages(config, intentOp)
+  const { origin, destination } = getIntentMessages(config, intentOp)
   if (config.account?.type === 'eoa') {
     const eoa = config.eoa
     if (!eoa) {
@@ -764,12 +788,26 @@ async function signIntent(
   const ownerValidator = getOwnerValidator(config)
   const isRoot = validator.address === ownerValidator.address
 
-  const originSignatures: Hex[] = []
+  const originSignatures: OriginSignature[] = []
   for (const typedData of origin) {
     const chain = getChainById(typedData.domain?.chainId as number)
+    // For same chain transactions, we need to modify the origin signers
+    // Specifically, we need to remove the enable data in this case
+    const matchesTargetChain = chain.id === targetChain.id
+    const originSigners =
+      signers?.type === 'experimental_session'
+        ? ({
+            type: 'experimental_session',
+            session: signers.session,
+            verifyExecutions: matchesTargetChain
+              ? signers.verifyExecutions
+              : undefined,
+            enableData: matchesTargetChain ? signers.enableData : undefined,
+          } as SignerSet & { type: 'experimental_session' })
+        : signers
     const signature = await signIntentTypedData(
       config,
-      signers,
+      originSigners,
       validator,
       isRoot,
       typedData,
@@ -777,11 +815,52 @@ async function signIntent(
     )
     originSignatures.push(signature)
   }
-  const destinationSignature = originSignatures.at(-1) as Hex
+
+  const destinationSignature = await getDestinationSignature(
+    config,
+    signers,
+    validator,
+    isRoot,
+    targetChain,
+    destination,
+    originSignatures,
+  )
+
   return {
     originSignatures,
     destinationSignature,
   }
+}
+
+async function getDestinationSignature(
+  config: RhinestoneConfig,
+  signers: SignerSet | undefined,
+  validator: Module,
+  isRoot: boolean,
+  targetChain: Chain,
+  destination: TypedDataDefinition,
+  originSignatures: OriginSignature[],
+): Promise<Hex> {
+  // For smart sessions, we need to provide a separate destination signature for the target chain
+  if (signers?.type === 'experimental_session') {
+    const destinationChain = getChainById(targetChain.id)
+    const destinationSignatures = await signIntentTypedData(
+      config,
+      signers,
+      validator,
+      isRoot,
+      destination,
+      destinationChain,
+    )
+    return typeof destinationSignatures === 'object'
+      ? destinationSignatures.preClaimSig
+      : (destinationSignatures ?? '0x')
+  }
+
+  const lastOriginSignature = originSignatures.at(-1)
+  return typeof lastOriginSignature === 'object'
+    ? lastOriginSignature.preClaimSig
+    : (lastOriginSignature ?? '0x')
 }
 
 function getIntentMessages(config: RhinestoneConfig, intentOp: IntentOp) {
@@ -850,7 +929,44 @@ async function signIntentTypedData<
     )
   }
   const hash = hashTypedData(parameters)
-  return await getPackedSignature(
+  if (signers?.type === 'experimental_session' && signers.verifyExecutions) {
+    const eip1271Signature = await getEip1271Signature(
+      config,
+      signers.type === 'experimental_session'
+        ? {
+            type: 'experimental_session',
+            session: signers.session,
+            verifyExecutions: false,
+            enableData: signers.enableData,
+          }
+        : signers,
+      chain,
+      {
+        address: validator.address,
+        isRoot,
+      },
+      hash,
+    )
+    const emissarySignature = await getEmissarySignature(
+      config,
+      signers.type === 'experimental_session'
+        ? {
+            type: 'experimental_session',
+            session: signers.session,
+            verifyExecutions: true,
+            enableData: signers.enableData,
+          }
+        : signers,
+      chain,
+      hash,
+    )
+    return {
+      preClaimSig: emissarySignature,
+      notarizedClaimSig: eip1271Signature,
+    }
+  }
+
+  return await getEip1271Signature(
     config,
     signers,
     chain,
@@ -940,7 +1056,7 @@ async function submitIntent(
   sourceChains: Chain[] | undefined,
   targetChain: Chain,
   intentOp: IntentOp,
-  originSignatures: Hex[],
+  originSignatures: OriginSignature[],
   destinationSignature: Hex,
   authorizations: SignedAuthorizationList,
   dryRun: boolean,
@@ -974,7 +1090,7 @@ function getOrchestratorByChain(
 
 function createSignedIntentOp(
   intentOp: IntentOp,
-  originSignatures: Hex[],
+  originSignatures: OriginSignature[],
   destinationSignature: Hex,
   authorizations: SignedAuthorizationList,
 ): SignedIntentOp {
@@ -1001,7 +1117,7 @@ async function submitIntentInternal(
   sourceChains: Chain[] | undefined,
   targetChain: Chain,
   intentOp: IntentOp,
-  originSignatures: Hex[],
+  originSignatures: OriginSignature[],
   destinationSignature: Hex,
   authorizations: SignedAuthorizationList,
   dryRun: boolean,
@@ -1085,8 +1201,7 @@ function getValidator(
   }
 
   // Smart sessions
-  const withSession =
-    signers.type === 'experimental_session' ? signers.session : null
+  const withSession = signers.type === 'experimental_session'
   if (withSession) {
     return getSmartSessionValidator(config)
   }
@@ -1111,17 +1226,32 @@ function parseCalls(calls: CalldataInput[], chainId: number): Call[] {
 function createAccountAccessList(
   sourceChains: Chain[] | undefined,
   sourceAssets: SourceAssetInput | undefined,
-): MappedChainTokenAccessList | UnmappedChainTokenAccessList | undefined {
+): AccountAccessList | undefined {
   if (!sourceChains && !sourceAssets) return undefined
+
   const chainIds = sourceChains?.map((chain) => chain.id as SupportedChain)
-  if (!sourceAssets) {
-    return { chainIds }
-  }
+
+  if (!sourceAssets) return { chainIds }
   if (Array.isArray(sourceAssets)) {
+    const isExactConfig =
+      sourceAssets.length > 0 && typeof sourceAssets[0] !== 'string'
+
+    if (isExactConfig) {
+      const resolvedConfigs = (sourceAssets as ExactInputConfig[]).map(
+        (config) => ({
+          chainId: config.chain.id,
+          tokenAddress: resolveTokenAddress(config.address, config.chain.id),
+          amount: config.amount,
+        }),
+      )
+      return resolvedConfigs
+    }
+
     return chainIds
-      ? { chainIds, tokens: sourceAssets }
-      : { tokens: sourceAssets }
+      ? { chainIds, tokens: sourceAssets as SimpleTokenList }
+      : { tokens: sourceAssets as SimpleTokenList }
   }
+
   return { chainTokens: sourceAssets }
 }
 

@@ -16,7 +16,7 @@ import {
 } from './registry'
 
 const DEPRECATED_CHAIN_ID = 5 // Goerli
-const UNSUPPORTED_CHAIN_ID = 56 // BNB Chain
+const UNSUPPORTED_CHAIN_ID = 81457 // Blast
 
 const TOKEN_SYMBOLS = {
   ETH: 'ETH',
@@ -58,6 +58,11 @@ describe('Registry', () => {
       expect(() =>
         getTokenSymbol(TOKEN_ADDRESSES.ARBTRUM_USDC, UNSUPPORTED_CHAIN_ID),
       ).toThrow(`Unsupported chain ${UNSUPPORTED_CHAIN_ID}`)
+    })
+
+    test('returns undefined for unsupported token on supported chain', () => {
+      const symbol = getTokenSymbol(UNSUPPORTED_TOKEN_ADDRESS, arbitrum.id)
+      expect(symbol).toBeUndefined()
     })
   })
 
