@@ -1,5 +1,20 @@
 # @rhinestone/sdk
 
+## 1.2.12
+
+### Patch Changes
+
+- e7255bc: add mock usd token
+
+## 1.2.11
+
+### Patch Changes
+
+- 69f99d7: Include swap types on intent
+- 7400889: - Pass `eip7702InitSignature` to `sendTransaction`
+  - Improve EIP-7702 init signature required error message
+- 995f064: add auxiliary funds to route
+
 ## 1.2.10
 
 ### Patch Changes

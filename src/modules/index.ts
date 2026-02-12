@@ -4,9 +4,12 @@ import {
   arbitrumSepolia,
   base,
   baseSepolia,
+  mainnet,
   optimism,
   optimismSepolia,
   polygon,
+  sepolia,
+  soneium,
 } from 'viem/chains'
 
 import type { RhinestoneConfig } from '../types'
@@ -25,7 +28,7 @@ import {
   type ModeleSetup,
   type Module,
 } from './common'
-import { getOwners, getValidators } from './read'
+import { getExecutors, getOwners, getValidators } from './read'
 import { getOwnerValidator, getSmartSessionValidator } from './validators'
 import { getSocialRecoveryValidator } from './validators/core'
 import {
@@ -128,6 +131,8 @@ function getIntentExecutor(config: RhinestoneConfig): Module {
 
 function isRip7212SupportedNetwork(chain: Chain) {
   const supportedChains: Chain[] = [
+    mainnet,
+    sepolia,
     optimism,
     optimismSepolia,
     polygon,
@@ -135,6 +140,7 @@ function isRip7212SupportedNetwork(chain: Chain) {
     baseSepolia,
     arbitrum,
     arbitrumSepolia,
+    soneium,
   ]
   return supportedChains.includes(chain)
 }
@@ -143,6 +149,7 @@ export {
   getSetup,
   getOwnerValidator,
   getOwners,
+  getExecutors,
   getIntentExecutor,
   getValidators,
   isRip7212SupportedNetwork,

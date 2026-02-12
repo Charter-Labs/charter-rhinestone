@@ -1,6 +1,6 @@
 {
   "name": "@charterlabs/rhinestone-sdk",
-  "version": "0.3.4",
+  "version": "0.3.5",
   "description": "Rhinestone SDK for Charter Labs",
   "author": {
     "name": "Charter Labs",
@@ -44,6 +44,16 @@
       "types": "./dist/src/actions/passkeys.d.ts",
       "import": "./dist/src/actions/passkeys.js",
       "require": "./dist/src/actions/passkeys.js"
+    },
+    "./signing/passkeys": {
+      "types": "./dist/src/accounts/signing/passkeys.d.ts",
+      "import": "./dist/src/accounts/signing/passkeys.js",
+      "require": "./dist/src/accounts/signing/passkeys.js"
+    },
+    "./actions/smart-sessions": {
+      "types": "./dist/src/actions/smart-sessions.d.ts",
+      "import": "./dist/src/actions/smart-sessions.js",
+      "require": "./dist/src/actions/smart-sessions.js"
     },
     "./actions/recovery": {
       "types": "./dist/src/actions/recovery.d.ts",
@@ -119,6 +129,11 @@
       "types": "./dist/src/execution/singleChainOps.d.ts",
       "import": "./dist/src/execution/singleChainOps.js",
       "require": "./dist/src/execution/singleChainOps.js"
+    },
+    "./smart-sessions": {
+      "types": "./dist/src/modules/validators/smart-sessions.d.ts",
+      "import": "./dist/src/modules/validators/smart-sessions.js",
+      "require": "./dist/src/modules/validators/smart-sessions.js"
     }
   },
   "files": [
@@ -136,7 +151,7 @@
     "access": "public"
   },
   "dependencies": {
-    "@rhinestone/shared-configs": "1.4.91",
+    "@rhinestone/shared-configs": "1.4.97",
     "ox": "^0.11.3",
     "solady": "^0.1.26"
   },
