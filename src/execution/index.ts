@@ -57,7 +57,7 @@ import {
 const POLL_INITIAL_MS = 500
 const POLL_SLOW_AFTER_MS = 15000
 const POLL_SLOW_MS = 2000
-const POLL_MAX_WAIT_MS = 180000
+const POLL_MAX_WAIT_MS = 210000
 const POLL_ERROR_BACKOFF_MS = 1000
 const POLL_ERROR_BACKOFF_MAX_MS = 10000
 
@@ -315,7 +315,7 @@ async function waitForExecution(
         const orchestrator = getOrchestrator(
           config.apiKey,
           config.endpointUrl,
-          config.fetch
+          config.headers,
         )
         try {
           intentStatus = await orchestrator.getIntentOpStatus(result.id)
@@ -398,7 +398,11 @@ async function waitForExecution(
 
 async function getPortfolio(config: RhinestoneConfig, onTestnets: boolean) {
   const address = getAddress(config)
-  const orchestrator = getOrchestrator(config.apiKey, config.endpointUrl, config.fetch)
+  const orchestrator = getOrchestrator(
+    config.apiKey,
+    config.endpointUrl,
+    config.headers,
+  )
   const supportedChainIds = getSupportedChainIds()
   const filteredChainIds = supportedChainIds.filter((id) => {
     try {
@@ -414,13 +418,13 @@ async function getIntentStatus(
   apiKey: string | undefined,
   endpointUrl: string | undefined,
   intentId: bigint,
-  customFetch?: typeof fetch,
+  headers?: Record<string, string>,
 ): Promise<
   TransactionStatus & {
     status: IntentOpStatus['status']
   }
 > {
-  const orchestrator = getOrchestrator(apiKey, endpointUrl, customFetch)
+  const orchestrator = getOrchestrator(apiKey, endpointUrl, headers)
   const internalStatus = await orchestrator.getIntentOpStatus(intentId)
   return {
     status: internalStatus.status,
@@ -439,9 +443,9 @@ async function splitIntents(
   apiKey: string | undefined,
   endpointUrl: string | undefined,
   input: SplitIntentsInput,
-  customFetch?: typeof fetch,
+  headers?: Record<string, string>,
 ) {
-  const orchestrator = getOrchestrator(apiKey, endpointUrl, customFetch)
+  const orchestrator = getOrchestrator(apiKey, endpointUrl, headers)
   return orchestrator.splitIntents(input)
 }
 

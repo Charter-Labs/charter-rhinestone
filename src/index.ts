@@ -68,7 +68,11 @@ import {
   getOwners as getOwnersInternal,
   getSessionDetails as getSessionDetailsInternal,
   getValidators as getValidatorsInternal,
+  MULTI_FACTOR_VALIDATOR_ADDRESS,
+  OWNABLE_VALIDATOR_ADDRESS,
+  SMART_SESSION_EMISSARY_ADDRESS,
   signEnableSession as signEnableSessionInternal,
+  WEBAUTHN_VALIDATOR_ADDRESS,
 } from './modules'
 import {
   isSessionEnabled as isSessionEnabledInternal,
@@ -502,7 +506,12 @@ async function createRhinestoneAccount(
 
   function experimental_getSessionDetails(sessions: Session[]) {
     const account = getAddress()
-    return getSessionDetailsInternal(account, sessions, config.useDevContracts)
+    return getSessionDetailsInternal(
+      account,
+      sessions,
+      config.provider,
+      config.useDevContracts,
+    )
   }
 
   function experimental_isSessionEnabled(session: Session) {
@@ -572,7 +581,7 @@ class RhinestoneSDK {
   private bundler?: BundlerConfig
   private paymaster?: PaymasterConfig
   private useDevContracts?: boolean
-  private fetch?: typeof fetch
+  private headers?: Record<string, string>
 
   constructor(options: RhinestoneSDKConfig) {
     this.apiKey = options.apiKey
@@ -581,7 +590,7 @@ class RhinestoneSDK {
     this.bundler = options.bundler
     this.paymaster = options.paymaster
     this.useDevContracts = options.useDevContracts
-    this.fetch = options.fetch
+    this.headers = options.headers
   }
 
   createAccount(config: RhinestoneAccountConfig) {
@@ -599,11 +608,21 @@ class RhinestoneSDK {
   }
 
   getIntentStatus(intentId: bigint) {
-    return getIntentStatusInternal(this.apiKey, this.endpointUrl, intentId)
+    return getIntentStatusInternal(
+      this.apiKey,
+      this.endpointUrl,
+      intentId,
+      this.headers,
+    )
   }
 
   splitIntents(input: SplitIntentsInput) {
-    return splitIntentsInternal(this.apiKey, this.endpointUrl, input)
+    return splitIntentsInternal(
+      this.apiKey,
+      this.endpointUrl,
+      input,
+      this.headers,
+    )
   }
 }
 
@@ -613,6 +632,11 @@ export {
   deployAccountsForOwners,
   walletClientToAccount,
   wrapParaAccount,
+  // Validator addresses
+  OWNABLE_VALIDATOR_ADDRESS,
+  WEBAUTHN_VALIDATOR_ADDRESS,
+  MULTI_FACTOR_VALIDATOR_ADDRESS,
+  SMART_SESSION_EMISSARY_ADDRESS,
   // Registry functions
   getSupportedTokens,
   getTokenAddress,

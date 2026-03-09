@@ -1,5 +1,25 @@
 # @rhinestone/sdk
 
+## 1.2.16
+
+### Patch Changes
+
+- a7758f0: Add optional Authorization header to orch
+
+## 1.2.15
+
+### Patch Changes
+
+- 64b30eb: Update swapOrigin type
+- 08ab15d: Add 'USDT0' token symbol
+- a4a07fc: Allow partial custom provider URLs
+
+## 1.2.14
+
+### Patch Changes
+
+- 623f9f1: Use provider param in smart session
+
 ## 1.2.13
 
 ### Patch Changes

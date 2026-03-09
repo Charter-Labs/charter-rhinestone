@@ -19,12 +19,11 @@ function getAlchemyUrl(chainId: SupportedChain, apiKey: string): string {
     .join(apiKey)
 }
 
-function getCustomUrl(chainId: number, urls: Record<number, string>): string {
-  const url = urls[chainId]
-  if (!url) {
-    throw new Error(`No custom provider URL configured for chain ${chainId}`)
-  }
-  return url
+function getCustomUrl(
+  chainId: number,
+  urls: Record<number, string>,
+): string | undefined {
+  return urls[chainId]
 }
 
 export { getAlchemyUrl, getCustomUrl }
