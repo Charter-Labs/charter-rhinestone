@@ -602,7 +602,7 @@ class RhinestoneSDK {
       bundler: this.bundler,
       paymaster: this.paymaster,
       useDevContracts: this.useDevContracts,
-      fetch: this.fetch,
+      headers: this.headers,
     }
     return createRhinestoneAccount(rhinestoneConfig)
   }

@@ -223,7 +223,7 @@ export class Orchestrator {
   }
 
   private async fetch(url: string, options?: RequestInit): Promise<any> {
-    const _fetch = this.customFetch ?? fetch
+    const _fetch = fetch
     const response = await _fetch(url, options)
 
     if (!response.ok) {
