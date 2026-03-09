@@ -229,6 +229,10 @@ interface RhinestoneSDKConfig {
   bundler?: BundlerConfig
   paymaster?: PaymasterConfig
   /**
+   * Optional custom fetch implementation to override the global fetch
+   */
+  fetch?: typeof fetch
+  /**
    * @internal
    * Optional orchestrator URL override for internal testing - do not use
    */

@@ -72,8 +72,9 @@ import {
 function getOrchestrator(
   apiKey?: string,
   orchestratorUrl?: string,
+  customFetch?: typeof fetch,
 ): Orchestrator {
-  return new Orchestrator(orchestratorUrl ?? PROD_ORCHESTRATOR_URL, apiKey)
+  return new Orchestrator(orchestratorUrl ?? PROD_ORCHESTRATOR_URL, apiKey, customFetch)
 }
 
 export type {

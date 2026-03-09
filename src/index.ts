@@ -572,6 +572,7 @@ class RhinestoneSDK {
   private bundler?: BundlerConfig
   private paymaster?: PaymasterConfig
   private useDevContracts?: boolean
+  private fetch?: typeof fetch
 
   constructor(options: RhinestoneSDKConfig) {
     this.apiKey = options.apiKey
@@ -580,6 +581,7 @@ class RhinestoneSDK {
     this.bundler = options.bundler
     this.paymaster = options.paymaster
     this.useDevContracts = options.useDevContracts
+    this.fetch = options.fetch
   }
 
   createAccount(config: RhinestoneAccountConfig) {
@@ -591,6 +593,7 @@ class RhinestoneSDK {
       bundler: this.bundler,
       paymaster: this.paymaster,
       useDevContracts: this.useDevContracts,
+      fetch: this.fetch,
     }
     return createRhinestoneAccount(rhinestoneConfig)
   }

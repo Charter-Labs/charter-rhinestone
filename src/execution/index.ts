@@ -312,7 +312,11 @@ async function waitForExecution(
             },
           })
         }
-        const orchestrator = getOrchestrator(config.apiKey, config.endpointUrl)
+        const orchestrator = getOrchestrator(
+          config.apiKey,
+          config.endpointUrl,
+          config.fetch
+        )
         try {
           intentStatus = await orchestrator.getIntentOpStatus(result.id)
           // reset error backoff on success
@@ -394,7 +398,7 @@ async function waitForExecution(
 
 async function getPortfolio(config: RhinestoneConfig, onTestnets: boolean) {
   const address = getAddress(config)
-  const orchestrator = getOrchestrator(config.apiKey, config.endpointUrl)
+  const orchestrator = getOrchestrator(config.apiKey, config.endpointUrl, config.fetch)
   const supportedChainIds = getSupportedChainIds()
   const filteredChainIds = supportedChainIds.filter((id) => {
     try {
@@ -410,12 +414,13 @@ async function getIntentStatus(
   apiKey: string | undefined,
   endpointUrl: string | undefined,
   intentId: bigint,
+  customFetch?: typeof fetch,
 ): Promise<
   TransactionStatus & {
     status: IntentOpStatus['status']
   }
 > {
-  const orchestrator = getOrchestrator(apiKey, endpointUrl)
+  const orchestrator = getOrchestrator(apiKey, endpointUrl, customFetch)
   const internalStatus = await orchestrator.getIntentOpStatus(intentId)
   return {
     status: internalStatus.status,
@@ -434,8 +439,9 @@ async function splitIntents(
   apiKey: string | undefined,
   endpointUrl: string | undefined,
   input: SplitIntentsInput,
+  customFetch?: typeof fetch,
 ) {
-  const orchestrator = getOrchestrator(apiKey, endpointUrl)
+  const orchestrator = getOrchestrator(apiKey, endpointUrl, customFetch)
   return orchestrator.splitIntents(input)
 }
 

@@ -763,7 +763,7 @@ async function prepareTransactionAsIntent(
     },
   }
 
-  const orchestrator = getOrchestrator(config.apiKey, config.endpointUrl)
+  const orchestrator = getOrchestrator(config.apiKey, config.endpointUrl, config.fetch)
   const intentRoute = await orchestrator.getIntentRoute(metaIntent)
   return intentRoute
 }
@@ -1148,7 +1148,7 @@ async function submitIntentInternal(
     targetExecutionSignature,
     authorizations,
   )
-  const orchestrator = getOrchestrator(config.apiKey, config.endpointUrl)
+  const orchestrator = getOrchestrator(config.apiKey, config.endpointUrl, config.fetch)
   const intentResults = await orchestrator.submitIntent(signedIntentOp, dryRun)
   return {
     type: 'intent',

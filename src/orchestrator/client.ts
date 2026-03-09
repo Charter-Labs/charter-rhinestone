@@ -52,10 +52,12 @@ function parseTokenAmountsRecord(
 export class Orchestrator {
   private serverUrl: string
   private apiKey?: string
+  private customFetch?: typeof fetch
 
-  constructor(serverUrl: string, apiKey?: string) {
+  constructor(serverUrl: string, apiKey?: string, customFetch?: typeof fetch) {
     this.serverUrl = serverUrl
     this.apiKey = apiKey
+    this.customFetch = customFetch
   }
 
   async getPortfolio(
@@ -217,7 +219,8 @@ export class Orchestrator {
   }
 
   private async fetch(url: string, options?: RequestInit): Promise<any> {
-    const response = await fetch(url, options)
+    const _fetch = this.customFetch ?? fetch
+    const response = await _fetch(url, options)
 
     if (!response.ok) {
       let errorData: any = {}
