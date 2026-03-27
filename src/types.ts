@@ -355,12 +355,23 @@ interface SessionEnableData {
   sessionToEnableIndex: number
 }
 
-interface SessionSignerSet {
-  type: 'experimental_session'
+interface ChainSessionConfig {
   session: Session
-  verifyExecutions?: boolean
   enableData?: SessionEnableData
 }
+
+interface SingleSessionSignerSet {
+  type: 'experimental_session'
+  session: Session
+  enableData?: SessionEnableData
+}
+
+interface PerChainSessionSignerSet {
+  type: 'experimental_session'
+  sessions: Record<number, ChainSessionConfig>
+}
+
+type SessionSignerSet = SingleSessionSignerSet | PerChainSessionSignerSet
 
 interface GuardiansSignerSet {
   type: 'guardians'
@@ -449,6 +460,10 @@ export type {
   WebauthnValidatorConfig,
   MultiFactorValidatorConfig,
   SignerSet,
+  ChainSessionConfig,
+  SingleSessionSignerSet,
+  PerChainSessionSignerSet,
+  SessionSignerSet,
   Action,
   SessionInput,
   SessionEnableData,

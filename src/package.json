@@ -1,6 +1,6 @@
 {
   "name": "@charterlabs/rhinestone-sdk",
-  "version": "0.3.9",
+  "version": "0.4.0",
   "description": "Rhinestone SDK for Charter Labs",
   "author": {
     "name": "Charter Labs",
@@ -151,7 +151,7 @@
     "access": "public"
   },
   "dependencies": {
-    "@rhinestone/shared-configs": "1.4.97",
+    "@rhinestone/shared-configs": "1.4.128",
     "ox": "^0.11.3",
     "solady": "^0.1.26"
   },

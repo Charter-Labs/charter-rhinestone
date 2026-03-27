@@ -27,6 +27,7 @@ import { getIntentExecutor, getSetup } from '../modules'
 import type { Module } from '../modules/common'
 import { getOwnerValidator } from '../modules/validators'
 import { getSocialRecoveryValidator } from '../modules/validators/core'
+import type { ResolvedSessionSignerSet } from '../modules/validators/smart-sessions'
 import type {
   AccountProviderConfig,
   Call,
@@ -106,6 +107,8 @@ import {
   getBundlerClient,
   type ValidatorConfig,
 } from './utils'
+
+type InternalSignerSet = SignerSet | ResolvedSessionSignerSet
 
 function getDeployArgs(config: RhinestoneConfig) {
   const account = getAccountProvider(config)
@@ -381,7 +384,7 @@ function checkAddress(config: RhinestoneConfig) {
 // Signs and packs a signature to be EIP-1271 compatible
 async function getEip1271Signature(
   config: RhinestoneConfig,
-  signers: SignerSet | undefined,
+  signers: InternalSignerSet | undefined,
   chain: Chain,
   validator: ValidatorConfig,
   hash: Hex,
@@ -434,7 +437,7 @@ async function getEip1271Signature(
 // Signs and packs a signature to be used by the emissary validator
 async function getEmissarySignature(
   config: RhinestoneConfig,
-  signers: SignerSet | undefined,
+  signers: InternalSignerSet | undefined,
   chain: Chain,
   hash: Hex,
   transformSignature: (signature: Hex) => Hex = (signature) => signature,
@@ -457,7 +460,7 @@ async function getTypedDataPackedSignature<
   primaryType extends keyof typedData | 'EIP712Domain' = keyof typedData,
 >(
   config: RhinestoneConfig,
-  signers: SignerSet | undefined,
+  signers: InternalSignerSet | undefined,
   chain: Chain,
   validator: ValidatorConfig,
   parameters: HashTypedDataParameters<typedData, primaryType>,
