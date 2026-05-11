@@ -1,5 +1,55 @@
 # @rhinestone/sdk
 
+## 1.6.1
+
+### Patch Changes
+
+- bb63504: Bump @rhinestone/shared-configs to pick up the RHINO settlement layer.
+
+## 1.6.0
+
+### Minor Changes
+
+- 2478841: Expose `sourceCalls` on `Transaction` so callers can supply per-chain source-side executions that are bundled into the intent at routing time.
+
+## 1.5.1
+
+### Patch Changes
+
+- e7e7113: Don't use fallback target for the dummy preclaim op.
+
+## 1.5.0
+
+### Minor Changes
+
+- e8bbde0: Add JWT authentication support alongside existing API key flow.
+
+  - New `auth` config option with `{ mode: 'experimental_jwt', accessToken, getIntentExtensionToken }`
+  - `createJwtSigner` helper in `@rhinestone/sdk/jwt-server` for same-host RS256 signing
+  - JCS canonicalization (RFC 8785) and intent input digest computation
+  - `shouldSponsor` config-based filtering (chain, account, calls predicates) built into `createJwtSigner`
+  - Framework handler wrappers for Web Standard (`Request`/`Response`) and Express
+  - `SponsorshipDeniedError` custom error class for typed denial handling
+
+### Patch Changes
+
+- d3ef16c: Support EC JWKs in `createJwtSigner`. The JWS algorithm is now derived from the supplied JWK (`P-256` → `ES256`, `P-384` → `ES384`, `P-521` → `ES512`); RSA keys continue to sign as `RS256`. Unsupported `kty`/`crv` combinations throw at signer construction.
+- cc71613: Drop `ox` dependency by inlining the single type reference (`WebAuthnP256.SignMetadata`). The SDK had no runtime usage of `ox` — only a type-only import — so this has no behavioral impact. Consumers still get `ox` transitively through `viem` if needed.
+- 7613f1d: Revert the `2026-04.blanc` orchestrator submit schema and restore the `2026-01.alps` API version. Submit requests again send `{ signedIntentOp }` and expect the nested `result.id`/`status` intent response.
+
+## 1.4.2
+
+### Patch Changes
+
+- 44b15b3: Fix `deploy()` for EIP-7702 accounts by passing `eip7702InitSignature` through to `sendTransaction`. Auto-signs via `signEip7702InitData` when no signature is provided.
+- 09650a9: Bump shared config version
+
+## 1.4.1
+
+### Patch Changes
+
+- 3695877: support v0 factory-backed initData in Safe EIP-712 domain and widen V0 util types
+
 ## 1.4.0
 
 ### Minor Changes

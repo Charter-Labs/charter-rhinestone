@@ -2,6 +2,7 @@ import { type Address, type Chain, createPublicClient, type Hex } from 'viem'
 import type { UserOperationReceipt } from 'viem/_types/account-abstraction'
 import { deploy, getAddress } from '../accounts'
 import { createTransport, getBundlerClient } from '../accounts/utils'
+import { type AuthProvider, createAuthProvider } from '../auth/provider'
 import {
   getOrchestrator,
   INTENT_STATUS_COMPLETED,
@@ -36,6 +37,7 @@ import {
   ExecutionError,
   IntentFailedError,
   IntentStatusTimeoutError,
+  InvalidSourceCallsError,
   isExecutionError,
   OrderPathRequiredForIntentsError,
   SessionChainRequiredError,
@@ -82,6 +84,7 @@ async function sendTransaction(
     'chain' in transaction ? transaction.chain : transaction.targetChain
   const {
     calls,
+    sourceCalls,
     gasLimit,
     tokenRequests,
     recipient,
@@ -98,6 +101,7 @@ async function sendTransaction(
   }
   return await sendTransactionInternal(config, sourceChains, targetChain, {
     callInputs: calls,
+    sourceCalls,
     gasLimit,
     initialTokenRequests: tokenRequests,
     recipient,
@@ -135,6 +139,7 @@ async function sendTransactionInternal(
   targetChain: Chain,
   options: {
     callInputs?: CallInput[]
+    sourceCalls?: Record<number, CallInput[]>
     gasLimit?: bigint
     initialTokenRequests?: TokenRequest[]
     recipient?: RhinestoneAccountConfig | Address
@@ -178,6 +183,7 @@ async function sendTransactionInternal(
       options.sourceAssets,
       options.feeAsset,
       options.lockFunds,
+      options.sourceCalls,
     )
   }
 }
@@ -231,8 +237,9 @@ async function sendTransactionAsIntent(
   sourceAssets?: SourceAssetInput,
   feeAsset?: Address | TokenSymbol,
   lockFunds?: boolean,
+  sourceCalls?: Record<number, CallInput[]>,
 ) {
-  const intentRoute = await prepareTransactionAsIntent(
+  const prepared = await prepareTransactionAsIntent(
     config,
     sourceChains,
     targetChain,
@@ -249,10 +256,12 @@ async function sendTransactionAsIntent(
     undefined,
     undefined,
     signers,
+    sourceCalls,
   )
-  if (!intentRoute) {
+  if (!prepared) {
     throw new OrderPathRequiredForIntentsError()
   }
+  const { intentRoute, intentInput } = prepared
   const { originSignatures, destinationSignature } = await signIntent(
     config,
     intentRoute.intentOp,
@@ -278,6 +287,7 @@ async function sendTransactionAsIntent(
     targetExecutionSignature,
     authorizations,
     false,
+    intentInput,
   )
 }
 
@@ -311,7 +321,7 @@ async function waitForExecution(
           })
         }
         const orchestrator = getOrchestrator(
-          config.apiKey,
+          config._authProvider ?? createAuthProvider(config),
           config.endpointUrl,
           config.headers,
         )
@@ -397,7 +407,7 @@ async function waitForExecution(
 async function getPortfolio(config: RhinestoneConfig, onTestnets: boolean) {
   const address = getAddress(config)
   const orchestrator = getOrchestrator(
-    config.apiKey,
+    config._authProvider ?? createAuthProvider(config),
     config.endpointUrl,
     config.headers,
   )
@@ -413,7 +423,7 @@ async function getPortfolio(config: RhinestoneConfig, onTestnets: boolean) {
 }
 
 async function getIntentStatus(
-  apiKey: string | undefined,
+  authProvider: AuthProvider,
   endpointUrl: string | undefined,
   intentId: bigint,
   headers?: Record<string, string>,
@@ -422,7 +432,7 @@ async function getIntentStatus(
     status: IntentOpStatus['status']
   }
 > {
-  const orchestrator = getOrchestrator(apiKey, endpointUrl, headers)
+  const orchestrator = getOrchestrator(authProvider, endpointUrl, headers)
   const internalStatus = await orchestrator.getIntentOpStatus(intentId)
   return {
     status: internalStatus.status,
@@ -438,12 +448,12 @@ async function getIntentStatus(
 }
 
 async function splitIntents(
-  apiKey: string | undefined,
+  authProvider: AuthProvider,
   endpointUrl: string | undefined,
   input: SplitIntentsInput,
   headers?: Record<string, string>,
 ) {
-  const orchestrator = getOrchestrator(apiKey, endpointUrl, headers)
+  const orchestrator = getOrchestrator(authProvider, endpointUrl, headers)
   return orchestrator.splitIntents(input)
 }
 
@@ -461,6 +471,7 @@ export {
   ExecutionError,
   IntentFailedError,
   IntentStatusTimeoutError,
+  InvalidSourceCallsError,
   OrderPathRequiredForIntentsError,
   SessionChainRequiredError,
   SignerNotSupportedError,

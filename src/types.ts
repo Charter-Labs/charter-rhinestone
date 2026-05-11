@@ -168,6 +168,24 @@ interface IntentExecutionPolicy {
   type: 'intent-execution'
 }
 
+interface Permit2ClaimPolicy {
+  type: 'permit2-claim'
+  /** Whitelisted Permit2 spender addresses */
+  arbiters?: Address[]
+  /** Permitted input tokens per origin chain */
+  tokensIn?: { chainId: number; token: Address }[]
+  /** Permitted output tokens per destination chain */
+  tokensOut?: { chainId: number; token: Address }[]
+  /** Permitted recipients per destination chain (use `'any'` to allow all) */
+  recipients?: { chainId: number; recipient: Address | 'any' }[]
+  /** Enforce that recipient === sponsor (bridge-to-self) */
+  recipientIsSponsor?: boolean
+  /** Deadline bounds (min/max unix timestamps) */
+  expiryBounds?: { min?: bigint; max?: bigint }
+  /** Fill expiry bounds per destination chain */
+  fillExpiryBounds?: { chainId: number; min?: bigint; max?: bigint }[]
+}
+
 type Policy =
   | SudoPolicy
   | UniversalActionPolicy
@@ -192,6 +210,7 @@ type Action = FallbackAction | ScopedAction
 interface SessionInput {
   owners: OwnerSet
   actions?: Action[]
+  claimPolicies?: [Permit2ClaimPolicy]
 }
 
 interface Session extends SessionInput {
@@ -234,8 +253,26 @@ interface RhinestoneAccountConfig {
       }
 }
 
-interface RhinestoneSDKConfig {
+interface ApiKeyAuth {
+  mode: 'apiKey'
   apiKey: string
+}
+
+interface JwtAuth {
+  mode: 'experimental_jwt'
+  /** Static access token, or async getter for refreshable tokens. */
+  accessToken: string | (() => Promise<string>)
+  /**
+   * Called at submitIntent time when the intent is sponsored.
+   * Receives the raw intent input object.
+   * Must return a signed intent_extension_token JWT.
+   */
+  getIntentExtensionToken?: (intentInput: unknown) => Promise<string>
+}
+
+type AuthConfig = ApiKeyAuth | JwtAuth
+
+interface RhinestoneSDKConfigBase {
   provider?: ProviderConfig
   bundler?: BundlerConfig
   paymaster?: PaymasterConfig
@@ -259,7 +296,22 @@ interface RhinestoneSDKConfig {
   headers?: Record<string, string>
 }
 
-type RhinestoneConfig = RhinestoneAccountConfig & Partial<RhinestoneSDKConfig>
+type RhinestoneSDKConfig = RhinestoneSDKConfigBase &
+  (
+    | {
+        /** @deprecated Use `auth` instead. Still supported for backward compatibility. */
+        apiKey: string
+      }
+    | {
+        auth: AuthConfig
+      }
+  )
+
+type RhinestoneConfig = RhinestoneAccountConfig &
+  Partial<RhinestoneSDKConfig> & {
+    /** @internal Resolved auth provider — set by RhinestoneSDK, not by users. */
+    _authProvider?: import('./auth/provider').AuthProvider
+  }
 
 type TokenSymbol = 'ETH' | 'WETH' | 'USDC' | 'USDT' | 'USDT0'
 
@@ -358,17 +410,20 @@ interface SessionEnableData {
 interface ChainSessionConfig {
   session: Session
   enableData?: SessionEnableData
+  verifyExecutions?: boolean
 }
 
 interface SingleSessionSignerSet {
   type: 'experimental_session'
   session: Session
   enableData?: SessionEnableData
+  verifyExecutions?: boolean
 }
 
 interface PerChainSessionSignerSet {
   type: 'experimental_session'
   sessions: Record<number, ChainSessionConfig>
+  verifyExecutions?: boolean
 }
 
 type SessionSignerSet = SingleSessionSignerSet | PerChainSessionSignerSet
@@ -390,6 +445,19 @@ type Sponsorship =
 
 interface BaseTransaction {
   calls?: CallInput[]
+  /**
+   * Per-chain executions to run on the source side, before the claim.
+   * Keyed by chain ID (must be present in `sourceChains`, or equal the
+   * target chain for same-chain transactions). Bundled into the intent
+   * at routing time and covered by the user's mandate signature.
+   *
+   * Caveat: only executes if the orchestrator creates an element on the
+   * matching chain — i.e. when the intent actually moves tokens from
+   * that source. Sponsored / no-op fills with no source movement skip
+   * the source element entirely, and `sourceCalls` keyed on that chain
+   * are silently dropped.
+   */
+  sourceCalls?: Record<number, CallInput[]>
   tokenRequests?: TokenRequests
   recipient?: RhinestoneAccountConfig | Address
   gasLimit?: bigint
@@ -472,5 +540,9 @@ export type {
   ModuleType,
   ModuleInput,
   Policy,
+  Permit2ClaimPolicy,
   UniversalActionPolicyParamCondition,
+  ApiKeyAuth,
+  JwtAuth,
+  AuthConfig,
 }

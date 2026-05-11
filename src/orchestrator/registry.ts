@@ -29,7 +29,7 @@ function getWethAddress(chain: Chain): Address {
     throw new UnsupportedTokenError('WETH', chain.id)
   }
 
-  return wethToken.address
+  return wethToken.address as Address
 }
 
 function getWrappedTokenAddress(chain: Chain): Address {
@@ -38,8 +38,13 @@ function getWrappedTokenAddress(chain: Chain): Address {
     throw new UnsupportedChainError(chain.id)
   }
 
-  const token = chainEntry.wrappedNativeToken
-  return token.address
+  const token =
+    chainEntry.wrappedNativeToken ??
+    chainEntry.tokens.find((t) => t.symbol === 'WETH')
+  if (!token) {
+    throw new UnsupportedTokenError('WETH', chain.id)
+  }
+  return token.address as Address
 }
 
 function getTokenSymbol(
@@ -121,7 +126,10 @@ function getSupportedTokens(chainId: number): TokenConfig[] {
     throw new UnsupportedChainError(chainId)
   }
 
-  return chainEntry.tokens
+  return chainEntry.tokens.map((token) => ({
+    ...token,
+    address: token.address as Address,
+  }))
 }
 
 function getDefaultAccountAccessList(onTestnets?: boolean) {

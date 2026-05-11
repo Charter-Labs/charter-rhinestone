@@ -1,4 +1,5 @@
 import type {
+  Account,
   Address,
   Chain,
   HashTypedDataParameters,
@@ -7,12 +8,12 @@ import type {
   SignedAuthorizationList,
   TypedData,
   TypedDataDefinition,
-  Account,
 } from 'viem'
 import type { UserOperationReceipt } from 'viem/account-abstraction'
 import {
   checkAddress,
   deploy as deployInternal,
+  deployStandaloneWithEoa as deployStandaloneWithEoaInternal,
   FactoryArgsNotAvailableError,
   getAccountProvider,
   getAddress as getAddressInternal,
@@ -21,10 +22,10 @@ import {
   OwnersFieldRequiredError,
   setup as setupInternal,
   signEip7702InitData as signEip7702InitDataInternal,
-  deployStandaloneWithEoa as deployStandaloneWithEoaInternal,
 } from './accounts'
 import { walletClientToAccount, wrapParaAccount } from './accounts/walletClient'
 import { deployAccountsForOwners } from './actions/deployment'
+import { type AuthProvider, createAuthProvider } from './auth/provider'
 import {
   getIntentStatus as getIntentStatusInternal,
   getPortfolio as getPortfolioInternal,
@@ -107,6 +108,7 @@ import type {
   OwnableValidatorConfig,
   OwnerSet,
   PaymasterConfig,
+  Permit2ClaimPolicy,
   Policy,
   ProviderConfig,
   Recovery,
@@ -576,7 +578,7 @@ async function createRhinestoneAccount(
 }
 
 class RhinestoneSDK {
-  private apiKey: string
+  private authProvider: AuthProvider
   private endpointUrl?: string
   private provider?: ProviderConfig
   private bundler?: BundlerConfig
@@ -585,7 +587,7 @@ class RhinestoneSDK {
   private headers?: Record<string, string>
 
   constructor(options: RhinestoneSDKConfig) {
-    this.apiKey = options.apiKey
+    this.authProvider = createAuthProvider(options)
     this.endpointUrl = options.endpointUrl
     this.provider = options.provider
     this.bundler = options.bundler
@@ -597,7 +599,7 @@ class RhinestoneSDK {
   createAccount(config: RhinestoneAccountConfig) {
     const rhinestoneConfig: RhinestoneConfig = {
       ...config,
-      apiKey: this.apiKey,
+      _authProvider: this.authProvider,
       endpointUrl: this.endpointUrl,
       provider: this.provider,
       bundler: this.bundler,
@@ -610,7 +612,7 @@ class RhinestoneSDK {
 
   getIntentStatus(intentId: bigint) {
     return getIntentStatusInternal(
-      this.apiKey,
+      this.authProvider,
       this.endpointUrl,
       intentId,
       this.headers,
@@ -619,7 +621,7 @@ class RhinestoneSDK {
 
   splitIntents(input: SplitIntentsInput) {
     return splitIntentsInternal(
-      this.apiKey,
+      this.authProvider,
       this.endpointUrl,
       input,
       this.headers,
@@ -674,6 +676,7 @@ export type {
   Session,
   Recovery,
   Policy,
+  Permit2ClaimPolicy,
   UniversalActionPolicyParamCondition,
   PreparedTransactionData,
   SignedTransactionData,
@@ -701,17 +704,18 @@ export type {
 }
 
 // WebAuthn Validator contract helpers (keep Charter API stable)
+// biome-ignore lint/performance/noBarrelFile: required to preserve Charter's public API surface
 export {
+  addCredential,
   generateCredentialId,
   getCredentialIds,
-  hasCredentialById,
+  getCredentialInfo,
+  getCredentials,
+  getThreshold,
   hasCredential,
-  addCredential,
+  hasCredentialById,
   removeCredential,
   setThreshold,
-  getCredentialInfo,
-  getThreshold,
-  getCredentials,
   WEBAUTHN_VALIDATOR_ABI,
 } from './modules/validators/webauthn-contract'
 
