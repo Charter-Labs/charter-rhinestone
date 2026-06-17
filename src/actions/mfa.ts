@@ -1,9 +1,10 @@
-import { encodeFunctionData, type Hex, padHex, toHex } from 'viem'
+import { type Address, encodeFunctionData, type Hex, padHex, toHex } from 'viem'
 import {
   getModuleInstallationCalls,
   getModuleUninstallationCalls,
 } from '../accounts'
 import {
+  getMultiFactorSubValidatorData,
   getMultiFactorValidator,
   getValidator,
   MULTI_FACTOR_VALIDATOR_ADDRESS,
@@ -15,6 +16,15 @@ import type {
   WebauthnValidatorConfig,
 } from '../types'
 
+type MultiFactorActionOptions = {
+  module?: Address
+  accountAddress?: Address
+}
+
+function getMultiFactorAddress(options?: MultiFactorActionOptions): Address {
+  return options?.module ?? MULTI_FACTOR_VALIDATOR_ADDRESS
+}
+
 /**
  * Enable multi-factor authentication
  * @param validators List of validators to use
@@ -24,10 +34,16 @@ import type {
 function enable(
   validators: (OwnableValidatorConfig | WebauthnValidatorConfig | null)[],
   threshold = 1,
+  options?: MultiFactorActionOptions,
 ): LazyCallInput {
-  const module = getMultiFactorValidator(threshold, validators)
   return {
-    async resolve({ config }) {
+    async resolve({ config, accountAddress }) {
+      const module = getMultiFactorValidator(
+        threshold,
+        validators,
+        options?.module,
+        options?.accountAddress ?? accountAddress,
+      )
       return getModuleInstallationCalls(config, module)
     },
   }
@@ -38,9 +54,12 @@ function enable(
  * @param newThreshold New threshold
  * @returns Call to change the threshold
  */
-function changeThreshold(newThreshold: number): CalldataInput {
+function changeThreshold(
+  newThreshold: number,
+  options?: MultiFactorActionOptions,
+): CalldataInput {
   return {
-    to: MULTI_FACTOR_VALIDATOR_ADDRESS,
+    to: getMultiFactorAddress(options),
     value: 0n,
     data: encodeFunctionData({
       abi: [
@@ -63,8 +82,8 @@ function changeThreshold(newThreshold: number): CalldataInput {
  * @param rhinestoneAccount Account to disable multi-factor authentication on
  * @returns Calls to disable multi-factor authentication
  */
-function disable(): LazyCallInput {
-  const module = getMultiFactorValidator(1, [])
+function disable(options?: MultiFactorActionOptions): LazyCallInput {
+  const module = getMultiFactorValidator(1, [], options?.module)
   return {
     async resolve({ config }) {
       return getModuleUninstallationCalls(config, module)
@@ -80,37 +99,70 @@ function disable(): LazyCallInput {
  */
 function setSubValidator(
   id: Hex | number,
+  validator: OwnableValidatorConfig,
+  options?: MultiFactorActionOptions,
+): CalldataInput
+function setSubValidator(
+  id: Hex | number,
+  validator: WebauthnValidatorConfig,
+  options: MultiFactorActionOptions & { accountAddress: Address },
+): CalldataInput
+function setSubValidator(
+  id: Hex | number,
+  validator: WebauthnValidatorConfig,
+  options?: MultiFactorActionOptions,
+): LazyCallInput
+function setSubValidator(
+  id: Hex | number,
   validator: OwnableValidatorConfig | WebauthnValidatorConfig,
-): CalldataInput {
+  options?: MultiFactorActionOptions,
+): CalldataInput | LazyCallInput {
   const validatorId = padHex(toHex(id), { size: 12 })
   const validatorModule = getValidator(validator)
+
+  const buildCall = (accountAddress?: Address): CalldataInput => {
+    const newValidatorData = getMultiFactorSubValidatorData(
+      validator,
+      accountAddress,
+    )
+    return {
+      to: getMultiFactorAddress(options),
+      value: 0n,
+      data: encodeFunctionData({
+        abi: [
+          {
+            type: 'function',
+            name: 'setValidator',
+            inputs: [
+              {
+                type: 'address',
+                name: 'validatorAddress',
+              },
+              {
+                type: 'bytes12',
+                name: 'validatorId',
+              },
+              {
+                type: 'bytes',
+                name: 'newValidatorData',
+              },
+            ],
+          },
+        ],
+        functionName: 'setValidator',
+        args: [validatorModule.address, validatorId, newValidatorData],
+      }),
+    }
+  }
+
+  if (validator.type !== 'passkey' || options?.accountAddress) {
+    return buildCall(options?.accountAddress)
+  }
+
   return {
-    to: MULTI_FACTOR_VALIDATOR_ADDRESS,
-    value: 0n,
-    data: encodeFunctionData({
-      abi: [
-        {
-          type: 'function',
-          name: 'setValidator',
-          inputs: [
-            {
-              type: 'address',
-              name: 'validatorAddress',
-            },
-            {
-              type: 'bytes12',
-              name: 'validatorId',
-            },
-            {
-              type: 'bytes',
-              name: 'newValidatorData',
-            },
-          ],
-        },
-      ],
-      functionName: 'setValidator',
-      args: [validatorModule.address, validatorId, validatorModule.initData],
-    }),
+    async resolve({ accountAddress }) {
+      return buildCall(accountAddress)
+    },
   }
 }
 
@@ -123,11 +175,12 @@ function setSubValidator(
 function removeSubValidator(
   id: Hex | number,
   validator: OwnableValidatorConfig | WebauthnValidatorConfig,
+  options?: MultiFactorActionOptions,
 ): CalldataInput {
   const validatorId = padHex(toHex(id), { size: 12 })
   const validatorModule = getValidator(validator)
   return {
-    to: MULTI_FACTOR_VALIDATOR_ADDRESS,
+    to: getMultiFactorAddress(options),
     value: 0n,
     data: encodeFunctionData({
       abi: [

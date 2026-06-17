@@ -5,6 +5,7 @@ import {
   concat,
   createWalletClient,
   custom,
+  decodeAbiParameters,
   encodeAbiParameters,
   encodePacked,
   type Hex,
@@ -30,8 +31,10 @@ import {
   generateCredentialId,
   packSignature as packPasskeySignature,
   packSignatureV0 as packPasskeySignatureV0,
+  packWebAuthnAuths,
   parsePublicKey,
   parseSignature,
+  WEBAUTHN_AUTH_ABI_COMPONENTS,
 } from './passkeys'
 
 function convertOwnerSetToSignerSet(owners: OwnerSet): SignerSet {
@@ -142,9 +145,63 @@ async function signWithMultiFactorAuth<T>(
         return '0x'
       }
       const validatorSigners: SignerSet = convertOwnerSetToSignerSet(validator)
+      if (
+        validator.type === 'passkey' &&
+        validatorSigners.type === 'owner' &&
+        validatorSigners.kind === 'passkey'
+      ) {
+        return signMain(
+          { ...validatorSigners, module: undefined },
+          chain,
+          address,
+          params,
+          isUserOpHash,
+        )
+      }
       return signMain(validatorSigners, chain, address, params, isUserOpHash)
     }),
   )
+
+  // For passkey subvalidators the MFA contract calls
+  // `IStatelessValidator(webAuthnAddr).validateSignatureWithData(hash, sig, storedData)`
+  // where `sig` must be `abi.encode(WebAuthnAuth[])` — the bare auth-struct array,
+  // NOT the V1 full packing that includes credentialIds and usePrecompile.
+  // Re-encode the sub-signature here after the generic signing path produced V1.
+  const finalSignatures = signatures.map((sig, index) => {
+    const validator = signers.validators[index]
+    if (validator === null || validator.type !== 'passkey') {
+      return sig
+    }
+    // Decode V1 packing: abi.encode(bytes32[], bool, WebAuthnAuth[])
+    const [, , webAuthns] = decodeAbiParameters(
+      [
+        { type: 'bytes32[]' },
+        { type: 'bool' },
+        { type: 'tuple[]', components: WEBAUTHN_AUTH_ABI_COMPONENTS },
+      ],
+      sig as Hex,
+    )
+    // Re-pack as bare WebAuthnAuth[] for stateless validateSignatureWithData
+    return packWebAuthnAuths(
+      (
+        webAuthns as readonly {
+          authenticatorData: Hex
+          clientDataJSON: string
+          challengeIndex: bigint
+          typeIndex: bigint
+          r: bigint
+          s: bigint
+        }[]
+      ).map((auth) => ({
+        authenticatorData: auth.authenticatorData,
+        clientDataJSON: auth.clientDataJSON,
+        challengeIndex: auth.challengeIndex,
+        typeIndex: auth.typeIndex,
+        r: auth.r,
+        s: auth.s,
+      })),
+    )
+  })
 
   const data = encodeAbiParameters(
     [
@@ -171,7 +228,7 @@ async function signWithMultiFactorAuth<T>(
             }),
             validatorModule.address,
           ]),
-          data: signatures[index],
+          data: finalSignatures[index],
         }
       }),
     ],

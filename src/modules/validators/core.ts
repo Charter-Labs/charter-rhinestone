@@ -16,6 +16,7 @@ import {
   AccountConfigurationNotSupportedError,
   OwnersFieldRequiredError,
 } from '../../accounts/error'
+import { generateCredentialId } from '../../accounts/signing/passkeys'
 import type {
   ENSValidatorConfig,
   OwnableValidatorConfig,
@@ -23,7 +24,6 @@ import type {
   RhinestoneAccountConfig,
   WebauthnValidatorConfig,
 } from '../../types'
-
 import { MODULE_TYPE_ID_VALIDATOR, type Module } from '../common'
 
 const SMART_SESSION_EMISSARY_ADDRESS_DEV: Address =
@@ -310,6 +310,113 @@ function getWebAuthnValidator(
   }
 }
 
+/**
+ * Builds the stored-data blob for a WebAuthn passkey subvalidator inside MFA.
+ *
+ * The deployed WebAuthn validator's `validateSignatureWithData` expects:
+ *   data      = abi.encode(WebAuthVerificationContext, address account)
+ *   signature = abi.encode(WebAuthnAuth[])
+ *
+ * This function pre-computes the account-scoped credential IDs
+ * (`keccak256(abi.encode(x, y, account))`), sorts them, aligns the credential
+ * data to the same order, and packs the full context blob that can be stored
+ * by the MFA module during `onInstall`.
+ *
+ * `usePrecompile` is set to `false` so the stored data works on any network;
+ * the fallback FCL path is always available.
+ */
+function buildWebAuthnMFAStoredData(
+  passkeyThreshold: number,
+  credentials: { pubKeyX: bigint; pubKeyY: bigint; requireUV: boolean }[],
+  accountAddress: Address,
+): Hex {
+  // Pair each credential with its account-scoped credential ID.
+  const paired = credentials.map((cred) => ({
+    credId: generateCredentialId(cred.pubKeyX, cred.pubKeyY, accountAddress),
+    cred,
+  }))
+
+  // Sort ascending by credId — the contract requires isSortedAndUniquified.
+  paired.sort((a, b) =>
+    a.credId < b.credId ? -1 : a.credId > b.credId ? 1 : 0,
+  )
+
+  const credentialIds = paired.map(({ credId }) => credId)
+  const credentialData = paired.map(({ cred }) => ({
+    pubKeyX: cred.pubKeyX,
+    pubKeyY: cred.pubKeyY,
+    requireUV: cred.requireUV,
+  }))
+
+  // WebAuthVerificationContext ABI layout (matches the deployed .old.sol struct)
+  const webAuthVerificationContextAbi = {
+    type: 'tuple',
+    components: [
+      { name: 'usePrecompile', type: 'bool' },
+      { name: 'threshold', type: 'uint256' },
+      { name: 'credentialIds', type: 'bytes32[]' },
+      {
+        name: 'credentialData',
+        type: 'tuple[]',
+        components: [
+          { name: 'pubKeyX', type: 'uint256' },
+          { name: 'pubKeyY', type: 'uint256' },
+          { name: 'requireUV', type: 'bool' },
+        ],
+      },
+    ],
+  } as const
+
+  return encodeAbiParameters(
+    [webAuthVerificationContextAbi, { name: 'account', type: 'address' }],
+    [
+      {
+        usePrecompile: false,
+        threshold: BigInt(passkeyThreshold),
+        credentialIds,
+        credentialData,
+      },
+      accountAddress,
+    ],
+  )
+}
+
+function getMultiFactorSubValidatorData(
+  validator:
+    | OwnableValidatorConfig
+    | ENSValidatorConfig
+    | WebauthnValidatorConfig,
+  accountAddress?: Address,
+): Hex {
+  if (validator.type !== 'passkey') {
+    return getValidator(validator).initData
+  }
+
+  if (!accountAddress) {
+    throw new Error(
+      'accountAddress is required when a passkey subvalidator is present. ' +
+        'The deployed WebAuthn validator stores credential IDs scoped to the account address.',
+    )
+  }
+
+  const publicKeys = validator.accounts.map((account) => {
+    const pk = account.publicKey
+    const bytes = typeof pk === 'string' ? hexToBytes(pk) : pk
+    const offset = bytes.length === 65 ? 1 : 0
+    return {
+      pubKeyX: BigInt(bytesToHex(bytes.slice(offset, 32 + offset))),
+      pubKeyY: BigInt(bytesToHex(bytes.slice(32 + offset, 64 + offset))),
+      requireUV: false,
+    }
+  })
+
+  return buildWebAuthnMFAStoredData(
+    validator.threshold ?? 1,
+    publicKeys,
+    accountAddress,
+  )
+}
+
 function getMultiFactorValidator(
   threshold: number,
   validators: (
@@ -319,6 +426,7 @@ function getMultiFactorValidator(
     | null
   )[],
   address?: Address,
+  accountAddress?: Address,
 ): Module {
   return {
     address: address ?? MULTI_FACTOR_VALIDATOR_ADDRESS,
@@ -348,6 +456,7 @@ function getMultiFactorValidator(
                   return null
                 }
                 const validatorModule = getValidator(validator)
+
                 return {
                   packedValidatorAndId: concat([
                     pad(toHex(index), {
@@ -355,7 +464,10 @@ function getMultiFactorValidator(
                     }),
                     validatorModule.address,
                   ]),
-                  data: validatorModule.initData,
+                  data: getMultiFactorSubValidatorData(
+                    validator,
+                    accountAddress,
+                  ),
                 }
               })
               .filter((validator) => validator !== null),
@@ -434,6 +546,8 @@ export {
   getENSValidator,
   getWebAuthnValidator,
   getMultiFactorValidator,
+  buildWebAuthnMFAStoredData,
+  getMultiFactorSubValidatorData,
   getSocialRecoveryValidator,
   getValidator,
   getMockSignature,

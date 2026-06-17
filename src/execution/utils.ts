@@ -1616,7 +1616,12 @@ function getValidator(
     }
     // Multi-factor
     if (withOwner.kind === 'multi-factor') {
-      return getMultiFactorValidator(1, withOwner.validators, withOwner.module)
+      return getMultiFactorValidator(
+        1,
+        withOwner.validators,
+        withOwner.module,
+        getAddress(config),
+      )
     }
   }
 

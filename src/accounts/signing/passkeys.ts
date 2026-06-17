@@ -181,11 +181,70 @@ function packSignatureV0(
   )
 }
 
+const WEBAUTHN_AUTH_ABI_COMPONENTS = [
+  {
+    type: 'bytes',
+    name: 'authenticatorData',
+  },
+  {
+    type: 'string',
+    name: 'clientDataJSON',
+  },
+  {
+    type: 'uint256',
+    name: 'challengeIndex',
+  },
+  {
+    type: 'uint256',
+    name: 'typeIndex',
+  },
+  {
+    type: 'uint256',
+    name: 'r',
+  },
+  {
+    type: 'uint256',
+    name: 's',
+  },
+] as const
+
+/**
+ * Encodes WebAuthn auth structs as a bare `WebAuthnAuth[]` ABI tuple array.
+ *
+ * This is the format expected by the deployed WebAuthn validator's
+ * `validateSignatureWithData` `signature` parameter when the validator is used
+ * as an MFA subvalidator. It differs from the full V1 packing produced by
+ * `packSignature`, which also includes `credentialIds` and `usePrecompile`.
+ */
+function packWebAuthnAuths(
+  webAuthns: {
+    authenticatorData: Hex
+    clientDataJSON: string
+    challengeIndex: bigint
+    typeIndex: bigint
+    r: bigint
+    s: bigint
+  }[],
+): Hex {
+  return encodeAbiParameters(
+    [
+      {
+        type: 'tuple[]',
+        name: 'webAuthns',
+        components: WEBAUTHN_AUTH_ABI_COMPONENTS,
+      },
+    ],
+    [webAuthns],
+  )
+}
+
 export {
   parsePublicKey,
   parseSignature,
   generateCredentialId,
   packSignature,
   packSignatureV0,
+  packWebAuthnAuths,
+  WEBAUTHN_AUTH_ABI_COMPONENTS,
 }
 export type { WebAuthnSignature }
