@@ -659,9 +659,6 @@ async function signAuthorizationsInternal(
   for (const chainId in requiredDelegations) {
     const delegation = requiredDelegations[chainId]
     const chain = getChainById(Number(chainId))
-    if (!chain) {
-      throw new Error(`Chain not supported: ${chainId}`)
-    }
     const walletClient = createWalletClient({
       chain,
       account: eoa,
@@ -1754,7 +1751,7 @@ function validateTokenSymbols(
       return true
     }
     // Token symbol
-    const address = getTokenAddress(addressOrSymbol, chain.id as any)
+    const address = getTokenAddress(addressOrSymbol, chain.id)
     return isAddress(address, { strict: false })
   }
 

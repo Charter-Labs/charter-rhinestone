@@ -1,8 +1,8 @@
 import { base } from 'viem/chains'
 import { describe, expect, test } from 'vitest'
 import { accountA } from '../../test/consts'
+import { RhinestoneSDK } from '..'
 import { resolveCallInputs } from '../execution/utils'
-import { RhinestoneSDK } from '../index'
 import {
   addOwner,
   changeThreshold,

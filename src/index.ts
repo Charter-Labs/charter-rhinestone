@@ -703,22 +703,3 @@ export type {
   MultiChainPermit2Result,
   BatchPermit2Result,
 }
-
-// WebAuthn Validator contract helpers (keep Charter API stable)
-// biome-ignore lint/performance/noBarrelFile: required to preserve Charter's public API surface
-export {
-  addCredential,
-  generateCredentialId,
-  getCredentialIds,
-  getCredentialInfo,
-  getCredentials,
-  getThreshold,
-  hasCredential,
-  hasCredentialById,
-  removeCredential,
-  setThreshold,
-  WEBAUTHN_VALIDATOR_ABI,
-} from './modules/validators/webauthn-contract'
-
-// Orchestrator helpers
-export { getOrchestrator } from './orchestrator'

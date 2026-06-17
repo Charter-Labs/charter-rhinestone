@@ -22,9 +22,7 @@ function getWethAddress(chain: Chain): Address {
     throw new UnsupportedChainError(chain.id)
   }
 
-  const wethToken = chainEntry.tokens.find(
-    (token: any) => token.symbol === 'WETH',
-  )
+  const wethToken = chainEntry.tokens.find((token) => token.symbol === 'WETH')
   if (!wethToken) {
     throw new UnsupportedTokenError('WETH', chain.id)
   }
@@ -57,29 +55,24 @@ function getTokenSymbol(
   }
 
   const token = chainEntry.tokens.find(
-    (t: any) =>
-      (t.address as string).toLowerCase() === tokenAddress.toLowerCase(),
+    (t) => t.address.toLowerCase() === tokenAddress.toLowerCase(),
   )
 
   return token?.symbol
 }
 
-function getTokenAddress(
-  token: TokenSymbol | Address,
-  chainId: number,
-): Address {
-  if (typeof token === 'string' && isAddress(token)) return token as Address
+function getTokenAddress(tokenSymbol: TokenSymbol, chainId: number): Address {
   const chainEntry = getChainEntry(chainId)
   if (!chainEntry) {
     throw new UnsupportedChainError(chainId)
   }
 
-  const tokenEntry = chainEntry.tokens.find((t) => t.symbol === token)
-  if (!tokenEntry) {
-    throw new UnsupportedTokenError(token as string, chainId)
+  const token = chainEntry.tokens.find((t) => t.symbol === tokenSymbol)
+  if (!token) {
+    throw new UnsupportedTokenError(tokenSymbol, chainId)
   }
 
-  return tokenEntry.address
+  return token.address as Address
 }
 
 function getTokenDecimals(tokenSymbol: TokenSymbol, chainId: number): number {

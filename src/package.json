@@ -1,6 +1,6 @@
 {
   "name": "@charterlabs/rhinestone-sdk",
-  "version": "0.4.1",
+  "version": "0.4.7",
   "description": "Rhinestone SDK for Charter Labs",
   "author": {
     "name": "Charter Labs",
@@ -65,6 +65,11 @@
       "import": "./dist/src/errors/index.js",
       "require": "./dist/src/errors/index.js"
     },
+    "./utils": {
+      "types": "./dist/src/utils/index.d.ts",
+      "import": "./dist/src/utils/index.js",
+      "require": "./dist/src/utils/index.js"
+    },
     "./dist/src/actions": {
       "types": "./dist/src/actions/index.d.ts",
       "import": "./dist/src/actions/index.js",
@@ -89,6 +94,11 @@
       "types": "./dist/src/actions/passkeys.d.ts",
       "import": "./dist/src/actions/passkeys.js",
       "require": "./dist/src/actions/passkeys.js"
+    },
+    "./dist/src/actions/smart-sessions": {
+      "types": "./dist/src/actions/smart-sessions.d.ts",
+      "import": "./dist/src/actions/smart-sessions.js",
+      "require": "./dist/src/actions/smart-sessions.js"
     },
     "./dist/src/actions/recovery": {
       "types": "./dist/src/actions/recovery.d.ts",
