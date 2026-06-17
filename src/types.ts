@@ -3,7 +3,14 @@ import type { WebAuthnAccount } from 'viem/account-abstraction'
 import type { ModuleType } from './modules/common'
 import type { AuxiliaryFunds, SettlementLayer } from './orchestrator/types'
 
-type AccountType = 'safe' | 'nexus' | 'kernel' | 'startale' | 'passport' | 'eoa'
+type AccountType =
+  | 'safe'
+  | 'nexus'
+  | 'kernel'
+  | 'startale'
+  | 'passport'
+  | 'eoa'
+  | 'hca'
 
 interface SafeAccount {
   type: 'safe'
@@ -33,6 +40,10 @@ interface PassportAccount {
   type: 'passport'
 }
 
+interface HcaAccount {
+  type: 'hca'
+}
+
 interface EoaAccount {
   type: 'eoa'
 }
@@ -43,6 +54,7 @@ type AccountProviderConfig =
   | KernelAccount
   | StartaleAccount
   | PassportAccount
+  | HcaAccount
   | EoaAccount
 
 interface OwnableValidatorConfig {
@@ -57,7 +69,6 @@ interface ENSValidatorConfig {
   accounts: Account[]
   threshold?: number
   ownerExpirations: number[]
-  module?: Address
 }
 
 interface WebauthnValidatorConfig {
@@ -502,6 +513,7 @@ export type {
   KernelAccount,
   StartaleAccount,
   PassportAccount,
+  HcaAccount,
   EoaAccount,
   RhinestoneAccountConfig,
   RhinestoneSDKConfig,

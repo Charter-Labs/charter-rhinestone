@@ -19,7 +19,6 @@ import {
   zeroAddress,
   zeroHash,
 } from 'viem'
-import { mainnet } from 'viem/chains'
 import { getAccountProvider } from '../../accounts'
 import { K1_DEFAULT_VALIDATOR_ADDRESS } from '../../accounts/startale'
 import { createTransport } from '../../accounts/utils'
@@ -47,6 +46,7 @@ import { MODULE_TYPE_ID_VALIDATOR, type Module } from '../common'
 import {
   getOwnerValidator,
   getValidator,
+  ownerSetUsesEns,
   SMART_SESSION_EMISSARY_ADDRESS,
   SMART_SESSION_EMISSARY_ADDRESS_DEV,
 } from './core'
@@ -523,7 +523,8 @@ async function signEnableSession(
     })
   }
 
-  return signTypedData(config, details.data, mainnet, undefined, {
+  const chain = getChainById(Number(details.hashesAndChainIds[0].chainId))
+  return signTypedData(config, details.data, chain, undefined, {
     skipErc6492: true,
   })
 }
@@ -643,6 +644,12 @@ function getSessionData(
   session: Session,
   useDevContracts?: boolean,
 ): SessionData {
+  // ENS validation is HCA-only, and HCA accounts cannot install the smart
+  // session validator, so an ENS session owner would silently resolve to the
+  // HCA module and sign/enable against a validator the account does not have.
+  if (ownerSetUsesEns(session.owners)) {
+    throw new Error('ENS owners are not supported for smart sessions')
+  }
   const validator = getValidator(session.owners)
   const allowedContent = [
     {
@@ -910,13 +917,14 @@ function getPolicyData(policy: Policy, useDevContracts?: boolean): PolicyData {
       }
     }
     case 'time-frame': {
+      // Deployed TimeFramePolicy reads `bytes16 validUntil || bytes16 validAfter` (32 bytes).
       return {
         policy: TIME_FRAME_POLICY_ADDRESS,
         initData: encodePacked(
-          ['uint48', 'uint48'],
+          ['uint128', 'uint128'],
           [
-            Math.floor(policy.validUntil / 1000),
-            Math.floor(policy.validAfter / 1000),
+            BigInt(Math.floor(policy.validUntil / 1000)),
+            BigInt(Math.floor(policy.validAfter / 1000)),
           ],
         ),
       }

@@ -1,5 +1,41 @@
 # @rhinestone/sdk
 
+## 1.8.0
+
+### Minor Changes
+
+- ee85453: Support custom module address overrides for the passkey and multi-factor validators via `owners.module`. Removed the inert `module` override from the ENS validator, whose address is fixed by the HCA account implementation.
+
+## 1.7.0
+
+### Minor Changes
+
+- 0e8bcad: Add ENS-HCA (Hierarchical Contract Account) support
+
+## 1.6.5
+
+### Patch Changes
+
+- 65997fd: Fix `signEnableSession` hardcoding `mainnet` when requesting an EIP-712 signature for the multi-chain session-enable digest
+
+## 1.6.4
+
+### Patch Changes
+
+- 7e0f405: Fix `getPolicyData('time-frame')` to match the deployed `TimeFramePolicy` contract. Now emits `encodePacked(['uint128','uint128'], [validUntil, validAfter])` — a 32-byte `bytes16 validUntil || bytes16 validAfter` payload. The previous 64-byte `encodeAbiParameters([uint48, uint48], …)` (shipped in 1.6.3) succeeded at `initializeWithMultiplexer` but wrote a zero config, so every later policy check reverted with `PolicyNotInitialized`. Sessions installed with a `time-frame` policy through the SDK now behave as intended.
+
+## 1.6.3
+
+### Patch Changes
+
+- e53f24e: Fix `getPolicyData('time-frame')` to match the deployed `TimeFramePolicy` contract. Was emitting `encodePacked(['uint48','uint48'], [validUntil, validAfter])`; now emits `encodeAbiParameters([uint48, uint48], [validAfter, validUntil])`. Sessions installed with a `time-frame` policy through the SDK now behave as intended.
+
+## 1.6.2
+
+### Patch Changes
+
+- a69b47f: Sync intent `signatureMode` with the bytes shape the SDK actually signs: EOAs, non-session smart accounts, and claim-only sessions now emit `SIG_MODE_ERC1271` (1), while sessions with `verifyExecutions=true` continue to emit the dual-sig `SIG_MODE_EMISSARY_EXECUTION_ERC1271` (5). Previously the SDK always picked a hybrid mode, wasting an on-chain call attempt on the wrong validator path.
+
 ## 1.6.1
 
 ### Patch Changes

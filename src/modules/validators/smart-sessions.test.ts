@@ -87,16 +87,21 @@ describe('getPolicyData', () => {
     expect(result.initData).toBe(expected)
   })
 
-  test('time-frame encodes validUntil/validAfter in seconds (ms → s)', () => {
+  test('time-frame packs (validUntil, validAfter) as bytes16 || bytes16 in seconds (ms → s)', () => {
     const validUntil = 1_800_000_000_000
     const validAfter = 1_700_000_000_000
     const result = getPolicyData({ type: 'time-frame', validUntil, validAfter })
     expect(result.policy).toBe(TIME_FRAME_POLICY_ADDRESS)
     const expected = encodePacked(
-      ['uint48', 'uint48'],
-      [Math.floor(validUntil / 1000), Math.floor(validAfter / 1000)],
+      ['uint128', 'uint128'],
+      [
+        BigInt(Math.floor(validUntil / 1000)),
+        BigInt(Math.floor(validAfter / 1000)),
+      ],
     )
     expect(result.initData).toBe(expected)
+    // 32 bytes total (matches deployed TimeFramePolicy's `bytes16 || bytes16` layout)
+    expect((expected.length - 2) / 2).toBe(32)
   })
 
   test('usage-limit encodes limit as uint128', () => {
@@ -144,6 +149,20 @@ describe('getSessionData', () => {
     )
     expect(data.actions[0].actionTargetSelector).toBe(
       SMART_SESSIONS_FALLBACK_TARGET_SELECTOR_FLAG,
+    )
+  })
+
+  test('ENS session owners are rejected', () => {
+    const ensSession: Session = {
+      chain: base,
+      owners: {
+        type: 'ens',
+        accounts: [accountA],
+        ownerExpirations: [281474976710655],
+      },
+    }
+    expect(() => getSessionData(ensSession)).toThrow(
+      'ENS owners are not supported for smart sessions',
     )
   })
 
