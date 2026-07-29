@@ -27,6 +27,7 @@ import { walletClientToAccount, wrapParaAccount } from './accounts/walletClient'
 import { deployAccountsForOwners } from './actions/deployment'
 import { type AuthProvider, createAuthProvider } from './auth/provider'
 import {
+  getAppFeeBalances as getAppFeeBalancesInternal,
   getIntentStatus as getIntentStatusInternal,
   getPortfolio as getPortfolioInternal,
   sendTransaction as sendTransactionInternal,
@@ -80,6 +81,9 @@ import {
   type SessionDetails,
 } from './modules/validators/smart-sessions'
 import {
+  type AppFee,
+  type AppFeeBalances,
+  type AppFeeRate,
   type ApprovalRequired,
   type AuxiliaryFunds,
   getAllSupportedChainsAndTokens,
@@ -488,7 +492,23 @@ async function createRhinestoneAccount(
   function getOwners(chain: Chain) {
     const accountType = getAccountProvider(config).type
     const account = getAddress()
-    return getOwnersInternal(accountType, account, chain, config.provider)
+    // For HCA, the module lives behind the factory (custom factories define
+    // their own). Resolve from the configured or initData factory so reads hit
+    // the right module.
+    const hcaFactory =
+      config.account?.type === 'hca'
+        ? (config.account.factory ??
+          (config.initData && 'factory' in config.initData
+            ? config.initData.factory
+            : undefined))
+        : undefined
+    return getOwnersInternal(
+      accountType,
+      account,
+      chain,
+      config.provider,
+      hcaFactory,
+    )
   }
 
   /**
@@ -628,78 +648,98 @@ class RhinestoneSDK {
       this.headers,
     )
   }
+
+  /**
+   * Get the integrator's accrued app-fee balance, as USD totals.
+   *
+   * App fees are earned by the integrator identified by this instance's API key
+   * (project-scoped, not tied to any account) and valued in USD at the moment
+   * each fee is collected, so the balance is not affected by later price
+   * movements of the collected tokens.
+   * @returns The withdrawable and pending app-fee balances in USD
+   */
+  getAppFeeBalances(): Promise<AppFeeBalances> {
+    return getAppFeeBalancesInternal(
+      this.authProvider,
+      this.endpointUrl,
+      this.headers,
+    )
+  }
 }
 
-export {
-  RhinestoneSDK,
-  createRhinestoneAccount,
-  deployAccountsForOwners,
-  walletClientToAccount,
-  wrapParaAccount,
-  // Validator addresses
-  OWNABLE_VALIDATOR_ADDRESS,
-  WEBAUTHN_VALIDATOR_ADDRESS,
-  MULTI_FACTOR_VALIDATOR_ADDRESS,
-  SMART_SESSION_EMISSARY_ADDRESS,
-  // Registry functions
-  getSupportedTokens,
-  getTokenAddress,
-  getTokenDecimals,
-  getAllSupportedChainsAndTokens,
-  // Compatibility export for admin service
-  deployStandaloneWithEoaInternal as deployStandaloneWithEoa,
-  // Permit2 helpers
-  checkERC20AllowanceDirect,
-  getPermit2Address,
-  // Multi-chain permit2 signing
-  signPermit2Batch,
-  signPermit2Sequential,
-}
 export type {
-  RhinestoneAccount,
-  AccountType,
-  RhinestoneAccountConfig,
   AccountProviderConfig,
-  ProviderConfig,
-  BundlerConfig,
-  PaymasterConfig,
-  Transaction,
-  TokenSymbol,
-  CallInput,
-  Call,
-  TokenRequest,
-  OwnerSet,
-  OwnableValidatorConfig,
-  WebauthnValidatorConfig,
-  MultiFactorValidatorConfig,
-  SignerSet,
-  ChainSessionConfig,
-  Session,
-  Recovery,
-  Policy,
-  Permit2ClaimPolicy,
-  UniversalActionPolicyParamCondition,
-  PreparedTransactionData,
-  SignedTransactionData,
-  TransactionResult,
-  PreparedUserOperationData,
-  SignedUserOperationData,
-  UserOperationResult,
+  AccountType,
+  AppFee,
+  AppFeeBalances,
+  AppFeeRate,
+  ApprovalRequired,
   AuxiliaryFunds,
+  BatchPermit2Result,
+  BundlerConfig,
+  Call,
+  CallInput,
+  ChainSessionConfig,
   IntentInput,
   IntentOp,
   IntentOpStatus,
   IntentRoute,
-  SettlementLayer,
-  SignedIntentOp,
-  SplitIntentsInput,
-  SplitIntentsResult,
-  Portfolio,
-  TokenRequirements,
-  WrapRequired,
-  ApprovalRequired,
   // Multi-chain permit2 types
   MultiChainPermit2Config,
   MultiChainPermit2Result,
-  BatchPermit2Result,
+  MultiFactorValidatorConfig,
+  OwnableValidatorConfig,
+  OwnerSet,
+  PaymasterConfig,
+  Permit2ClaimPolicy,
+  Policy,
+  Portfolio,
+  PreparedTransactionData,
+  PreparedUserOperationData,
+  ProviderConfig,
+  Recovery,
+  RhinestoneAccount,
+  RhinestoneAccountConfig,
+  Session,
+  SettlementLayer,
+  SignedIntentOp,
+  SignedTransactionData,
+  SignedUserOperationData,
+  SignerSet,
+  SplitIntentsInput,
+  SplitIntentsResult,
+  TokenRequest,
+  TokenRequirements,
+  TokenSymbol,
+  Transaction,
+  TransactionResult,
+  UniversalActionPolicyParamCondition,
+  UserOperationResult,
+  WebauthnValidatorConfig,
+  WrapRequired,
+}
+export {
+  // Permit2 helpers
+  checkERC20AllowanceDirect,
+  createRhinestoneAccount,
+  deployAccountsForOwners,
+  // Compatibility export for admin service
+  deployStandaloneWithEoaInternal as deployStandaloneWithEoa,
+  getAllSupportedChainsAndTokens,
+  getPermit2Address,
+  // Registry functions
+  getSupportedTokens,
+  getTokenAddress,
+  getTokenDecimals,
+  MULTI_FACTOR_VALIDATOR_ADDRESS,
+  // Validator addresses
+  OWNABLE_VALIDATOR_ADDRESS,
+  RhinestoneSDK,
+  SMART_SESSION_EMISSARY_ADDRESS,
+  // Multi-chain permit2 signing
+  signPermit2Batch,
+  signPermit2Sequential,
+  WEBAUTHN_VALIDATOR_ADDRESS,
+  walletClientToAccount,
+  wrapParaAccount,
 }

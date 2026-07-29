@@ -19,7 +19,7 @@ import {
   getSupportedChainIds,
   isTestnet,
 } from '../orchestrator/registry'
-import type { SettlementLayer } from '../orchestrator/types'
+import type { AppFeeRate, SettlementLayer } from '../orchestrator/types'
 import type {
   CalldataInput,
   CallInput,
@@ -94,6 +94,8 @@ async function sendTransaction(
     settlementLayers,
     sourceAssets,
     feeAsset,
+    appFees,
+    customDeadline,
   } = transaction
   const isUserOpSigner = signers?.type === 'guardians'
   if (isUserOpSigner) {
@@ -111,6 +113,8 @@ async function sendTransaction(
     settlementLayers,
     sourceAssets,
     feeAsset,
+    appFees,
+    customDeadline,
   })
 }
 
@@ -150,6 +154,8 @@ async function sendTransactionInternal(
     sourceAssets?: SourceAssetInput
     lockFunds?: boolean
     feeAsset?: Address | TokenSymbol
+    appFees?: AppFeeRate
+    customDeadline?: number
   },
 ) {
   const accountAddress = getAddress(config)
@@ -184,6 +190,8 @@ async function sendTransactionInternal(
       options.feeAsset,
       options.lockFunds,
       options.sourceCalls,
+      options.appFees,
+      options.customDeadline,
     )
   }
 }
@@ -238,6 +246,8 @@ async function sendTransactionAsIntent(
   feeAsset?: Address | TokenSymbol,
   lockFunds?: boolean,
   sourceCalls?: Record<number, CallInput[]>,
+  appFees?: AppFeeRate,
+  customDeadline?: number,
 ) {
   const prepared = await prepareTransactionAsIntent(
     config,
@@ -257,6 +267,8 @@ async function sendTransactionAsIntent(
     undefined,
     signers,
     sourceCalls,
+    appFees,
+    customDeadline,
   )
   if (!prepared) {
     throw new OrderPathRequiredForIntentsError()
@@ -454,23 +466,33 @@ async function splitIntents(
   return orchestrator.splitIntents(input)
 }
 
+async function getAppFeeBalances(
+  authProvider: AuthProvider,
+  endpointUrl: string | undefined,
+  headers?: Record<string, string>,
+) {
+  const orchestrator = getOrchestrator(authProvider, endpointUrl, headers)
+  return orchestrator.getAppFeeBalances()
+}
+
+export type { TransactionResult, TransactionStatus, UserOperationResult }
 export {
+  ExecutionError,
+  getAppFeeBalances,
+  getIntentStatus,
+  getPortfolio,
+  IntentFailedError,
+  IntentStatusTimeoutError,
+  InvalidSourceCallsError,
+  // Errors
+  isExecutionError,
+  OrderPathRequiredForIntentsError,
+  SessionChainRequiredError,
+  SignerNotSupportedError,
   sendTransaction,
   sendTransactionInternal,
   sendUserOperation,
   sendUserOperationInternal,
-  waitForExecution,
-  getPortfolio,
-  getIntentStatus,
   splitIntents,
-  // Errors
-  isExecutionError,
-  ExecutionError,
-  IntentFailedError,
-  IntentStatusTimeoutError,
-  InvalidSourceCallsError,
-  OrderPathRequiredForIntentsError,
-  SessionChainRequiredError,
-  SignerNotSupportedError,
+  waitForExecution,
 }
-export type { TransactionStatus, TransactionResult, UserOperationResult }

@@ -1,7 +1,11 @@
 import type { Account, Address, Chain, Hex } from 'viem'
 import type { WebAuthnAccount } from 'viem/account-abstraction'
 import type { ModuleType } from './modules/common'
-import type { AuxiliaryFunds, SettlementLayer } from './orchestrator/types'
+import type {
+  AppFeeRate,
+  AuxiliaryFunds,
+  SettlementLayer,
+} from './orchestrator/types'
 
 type AccountType =
   | 'safe'
@@ -21,7 +25,12 @@ interface SafeAccount {
 
 interface NexusAccount {
   type: 'nexus'
-  version?: '1.0.2' | '1.2.0' | 'rhinestone-1.0.0-beta' | 'rhinestone-1.0.0'
+  version?:
+    | '1.0.2'
+    | '1.2.0'
+    | '1.2.1'
+    | 'rhinestone-1.0.0-beta'
+    | 'rhinestone-1.0.0'
   salt?: Hex
 }
 
@@ -42,6 +51,10 @@ interface PassportAccount {
 
 interface HcaAccount {
   type: 'hca'
+  // Custom HCA factory. Defines the CREATE3 deploy address and, via its
+  // implementation, the account's default validator (the HCA module).
+  // Defaults to the canonical HCA factory.
+  factory?: Address
 }
 
 interface EoaAccount {
@@ -473,6 +486,16 @@ interface BaseTransaction {
   eip7702InitSignature?: Hex
   sourceAssets?: SourceAssetInput
   feeAsset?: Address | TokenSymbol
+  appFees?: AppFeeRate
+  /**
+   * Absolute unix timestamp (seconds) overriding the on-chain fill deadline.
+   * Honored only on the tokenless (same-chain / no-funding) route and silently
+   * ignored on every other route. Must be between `now + 120s` and
+   * `now + 86400s` (24h); out-of-range values are rejected by the orchestrator
+   * with a `400`. When honored, the quoted `expiresAt` and the bundle
+   * claim/nonce expiry track this value automatically.
+   */
+  customDeadline?: number
   settlementLayers?: SettlementLayer[]
   lockFunds?: boolean
   auxiliaryFunds?: AuxiliaryFunds
@@ -503,54 +526,54 @@ interface UserOperationTransaction {
 type Transaction = SameChainTransaction | CrossChainTransaction
 
 export type {
-  AccountType,
-  SafeAccount,
-  NexusAccount,
-  KernelAccount,
-  StartaleAccount,
-  PassportAccount,
-  HcaAccount,
-  EoaAccount,
-  RhinestoneAccountConfig,
-  RhinestoneSDKConfig,
-  RhinestoneConfig,
   AccountProviderConfig,
-  ProviderConfig,
+  AccountType,
+  Action,
+  ApiKeyAuth,
+  AuthConfig,
   BundlerConfig,
-  PaymasterConfig,
-  Transaction,
-  UserOperationTransaction,
-  TokenSymbol,
+  Call,
   CalldataInput,
-  LazyCallInput,
   CallInput,
   CallResolveContext,
-  Call,
+  ChainSessionConfig,
+  ENSValidatorConfig,
+  EoaAccount,
+  HcaAccount,
+  JwtAuth,
+  KernelAccount,
+  LazyCallInput,
+  ModuleInput,
+  ModuleType,
+  MultiFactorValidatorConfig,
+  NexusAccount,
+  OwnableValidatorConfig,
+  OwnerSet,
+  PassportAccount,
+  PaymasterConfig,
+  PerChainSessionSignerSet,
+  Permit2ClaimPolicy,
+  Policy,
+  ProviderConfig,
+  Recovery,
+  RhinestoneAccountConfig,
+  RhinestoneConfig,
+  RhinestoneSDKConfig,
+  SafeAccount,
+  Session,
+  SessionEnableData,
+  SessionInput,
+  SessionSignerSet,
+  SignerSet,
+  SingleSessionSignerSet,
+  SourceAssetInput,
   Sponsorship,
+  StartaleAccount,
   TokenRequest,
   TokenRequests,
-  SourceAssetInput,
-  OwnerSet,
-  OwnableValidatorConfig,
-  ENSValidatorConfig,
-  WebauthnValidatorConfig,
-  MultiFactorValidatorConfig,
-  SignerSet,
-  ChainSessionConfig,
-  SingleSessionSignerSet,
-  PerChainSessionSignerSet,
-  SessionSignerSet,
-  Action,
-  SessionInput,
-  SessionEnableData,
-  Session,
-  Recovery,
-  ModuleType,
-  ModuleInput,
-  Policy,
-  Permit2ClaimPolicy,
+  TokenSymbol,
+  Transaction,
   UniversalActionPolicyParamCondition,
-  ApiKeyAuth,
-  JwtAuth,
-  AuthConfig,
+  UserOperationTransaction,
+  WebauthnValidatorConfig,
 }

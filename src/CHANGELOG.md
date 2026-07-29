@@ -1,5 +1,50 @@
 # @rhinestone/sdk
 
+## 1.12.0
+
+### Minor Changes
+
+- 5f94074: Add opt-in support for Nexus v1.2.1 via `account: { type: 'nexus', version: '1.2.1' }`. The previous Nexus stays the default.
+
+## 1.11.0
+
+### Minor Changes
+
+- cc7e039: Add `customDeadline` transaction option to override the on-chain fill deadline. Accepts an absolute unix timestamp (seconds) and is honored only on the tokenless (same-chain / no-funding) route — ignored elsewhere. Bounds (`now + 120s` .. `now + 86400s`) are enforced by the orchestrator. When honored, the quoted `expiresAt` and the bundle claim/nonce expiry track this value automatically.
+
+## 1.10.0
+
+### Minor Changes
+
+- 48c6428: Add `getAppFeeBalances` to the account and orchestrator client. Returns the integrator's accrued app-fee balance as USD totals (`withdrawableUsd`, `pendingUsd`), read from `GET /app-fees/balances`. Fees are valued in USD at the moment they are collected, so the balance is unaffected by later price movements of the collected tokens.
+- 32a32a0: Expose app-fee request options and quote fields for legacy alps orchestrator routes.
+
+### Patch Changes
+
+- 1f1935f: Bump @rhinestone/shared-configs to 1.7.8 to add Robinhood Chain (4663). Raise the
+  `viem` peer floor to ^2.55.0 — shared-configs 1.7.8's generated networks import
+  `robinhood` from `viem/chains`, which was added in viem 2.55.0; on older viem the
+  package crashes at module load.
+
+## 1.9.2
+
+### Patch Changes
+
+- 0b80cb1: Allow Startale accounts adopted via `initData` to sign intents: `getEip712Domain` no longer throws for existing accounts and derives the domain from `getAddress(config)`.
+- bd967d5: Fix `setup()` reverting on Startale K1 accounts: skip the built-in K1 default validator so only genuinely missing modules (e.g. the intent executor) are installed.
+
+## 1.9.1
+
+### Patch Changes
+
+- 0825845: Fix `enable` (ECDSA) on Nexus accounts. The OwnableValidator is the Nexus default validator and cannot be added via `installModule` (`DefaultValidatorAlreadyInstalled`); on passkey-bootstrapped accounts it is also never initialized, so `addOwner` reverts with `NotInitialized`. `enable` now initializes the default validator directly via `onInstall`, and throws a clear error (instead of an opaque simulation revert) when ECDSA is already enabled.
+
+## 1.9.0
+
+### Minor Changes
+
+- 31cc690: Support a custom HCA factory via `account.factory`, which defines the deploy address and, through its implementation, the account's default validator.
+
 ## 1.8.0
 
 ### Minor Changes
