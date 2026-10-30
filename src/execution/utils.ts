@@ -45,9 +45,14 @@ import {
   getSmartAccount,
   getTypedDataPackedSignature,
   is7702,
+  packEip1271Signature,
   toErc6492Signature,
 } from '../accounts'
-import { convertOwnerSetToSignerSet } from '../accounts/signing/common'
+import { wrapMessageHash as wrapKernelMessageHash } from '../accounts/kernel'
+import {
+  convertOwnerSetToSignerSet,
+  signQuorumHash,
+} from '../accounts/signing/common'
 import { K1_DEFAULT_VALIDATOR_ADDRESS } from '../accounts/startale'
 import {
   createTransport,
@@ -74,6 +79,12 @@ import {
 } from '../modules/validators/core'
 import type { Permit2ClaimMessage } from '../modules/validators/policies/claim/permit2'
 import { buildPermit2ClaimPolicyCalldata } from '../modules/validators/policies/claim/permit2'
+import {
+  buildQuorumMerkleTree,
+  encodeQuorumMerkleSignature,
+  getQuorumMerkleRootSignableHash,
+  getQuorumSignableHash,
+} from '../modules/validators/quorum'
 import type { ResolvedSessionSignerSet } from '../modules/validators/smart-sessions'
 import {
   type Execution,
@@ -95,11 +106,13 @@ import {
   type IntentOpElement,
   type Account as OrchestratorAccount,
   type OriginSignature,
+  type ProtocolFeeRate,
   type SettlementLayer,
   SIG_MODE_EMISSARY_EXECUTION_ERC1271,
   SIG_MODE_ERC1271,
   type SignatureMode,
   type SupportedChain,
+  type SwapQuoterFilter,
 } from '../orchestrator/types'
 import { convertBigIntFields } from '../orchestrator/utils'
 import type {
@@ -129,6 +142,7 @@ import {
   SignerNotSupportedError,
 } from './error'
 import { getTypedData as getPermit2TypedData } from './permit2'
+import { narrowQuoterPin, quoterPinFromSession } from './quoters'
 import { getTypedData as getSingleChainOpsTypedData } from './singleChainOps'
 
 type InternalSignerSet =
@@ -159,14 +173,22 @@ async function resolveSignersForChain(
     config.useDevContracts,
   )
   const enableData = enabled ? undefined : resolved.enableData
-  const hasExplicitActions = !!resolved.session.actions?.length
-  const verifyExecutions =
-    resolved.verifyExecutions ?? signers.verifyExecutions ?? hasExplicitActions
+  const restricted =
+    resolved.session.restrictToActions === true ||
+    resolved.session.swap !== undefined
+  const hasExplicitActions =
+    !!resolved.session.actions?.length || resolved.session.swap !== undefined
+  const verifyExecutions = restricted
+    ? true
+    : (resolved.verifyExecutions ??
+      signers.verifyExecutions ??
+      hasExplicitActions)
   return {
     type: 'experimental_session',
     session: resolved.session,
     enableData,
     verifyExecutions,
+    useDevContracts: config.useDevContracts,
   } satisfies ResolvedSessionSignerSet
 }
 
@@ -255,6 +277,7 @@ interface SignedTransactionData extends PreparedTransactionData {
   originSignatures: OriginSignature[]
   destinationSignature: Hex
   targetExecutionSignature: Hex | undefined
+  permitSignatures?: SignedIntentOp['permitSignatures']
 }
 
 interface SignedUserOperationData extends PreparedUserOperationData {
@@ -273,10 +296,12 @@ async function prepareTransaction(
     sponsored,
     eip7702InitSignature,
     settlementLayers,
+    quoters,
     sourceAssets,
     feeAsset,
     appFees,
     customDeadline,
+    protocolFees,
     lockFunds,
     auxiliaryFunds,
     account,
@@ -314,6 +339,8 @@ async function prepareTransaction(
     sourceCalls,
     appFees,
     customDeadline,
+    protocolFees,
+    quoters,
   )
 
   return {
@@ -402,6 +429,7 @@ async function signTransaction(
     targetChain,
     signers,
   )
+  const permitSignatures = await signPermits(config, intentRoute)
 
   return {
     intentRoute,
@@ -410,7 +438,33 @@ async function signTransaction(
     originSignatures,
     destinationSignature,
     targetExecutionSignature,
+    permitSignatures,
   }
+}
+
+async function signPermits(
+  config: RhinestoneConfig,
+  intentRoute: IntentRoute,
+): Promise<SignedIntentOp['permitSignatures']> {
+  const eoa = config.eoa
+  if (config.account?.type !== 'eoa' || !eoa?.signTypedData) {
+    return undefined
+  }
+  const signatures: NonNullable<SignedIntentOp['permitSignatures']> = {}
+  for (const [chainId, tokens] of Object.entries(
+    intentRoute.tokenRequirements ?? {},
+  )) {
+    for (const [token, requirement] of Object.entries(tokens)) {
+      if (requirement.type !== 'approval' || !requirement.permit) {
+        continue
+      }
+      signatures[Number(chainId)] = {
+        ...signatures[Number(chainId)],
+        [token]: await eoa.signTypedData(requirement.permit),
+      }
+    }
+  }
+  return Object.keys(signatures).length > 0 ? signatures : undefined
 }
 
 async function getTargetExecutionSignature(
@@ -630,6 +684,7 @@ async function signTypedDataWithSession<
         salt,
       },
     },
+    session.owners,
     (signature) => {
       const erc7739Signature = wrapTypedDataSignature({
         domain: parameters.domain as TypedDataDomain,
@@ -699,6 +754,7 @@ async function submitTransaction(
     originSignatures,
     destinationSignature,
     targetExecutionSignature,
+    permitSignatures,
   } = signedTransaction
   const { sourceChains, targetChain } = getTransactionParams(transaction)
   const intentOp = intentRoute.intentOp
@@ -711,6 +767,7 @@ async function submitTransaction(
     destinationSignature,
     targetExecutionSignature,
     authorizations,
+    permitSignatures,
     dryRun,
     intentInput,
   )
@@ -738,10 +795,12 @@ function getTransactionParams(transaction: Transaction) {
   const sponsored = transaction.sponsored
   const gasLimit = transaction.gasLimit
   const settlementLayers = transaction.settlementLayers
+  const quoters = transaction.quoters
   const sourceAssets = transaction.sourceAssets
   const feeAsset = transaction.feeAsset
   const appFees = transaction.appFees
   const customDeadline = transaction.customDeadline
+  const protocolFees = transaction.protocolFees
   const lockFunds = transaction.lockFunds
   const auxiliaryFunds = transaction.auxiliaryFunds
   const account = transaction.experimental_accountOverride
@@ -759,10 +818,12 @@ function getTransactionParams(transaction: Transaction) {
     eip7702InitSignature,
     gasLimit,
     settlementLayers,
+    quoters,
     sourceAssets,
     feeAsset,
     appFees,
     customDeadline,
+    protocolFees,
     lockFunds,
     auxiliaryFunds,
     account,
@@ -887,6 +948,8 @@ async function prepareTransactionAsIntent(
   sourceCalls: Record<number, CallInput[]> | undefined,
   appFees?: AppFeeRate,
   customDeadline?: number,
+  protocolFees?: ProtocolFeeRate,
+  quoters?: SwapQuoterFilter,
 ) {
   const calls = parseCalls(callInputs, targetChain.id)
   const accountAccessList = createAccountAccessList(sourceChains, sourceAssets)
@@ -1004,6 +1067,12 @@ async function prepareTransactionAsIntent(
     }
   }
 
+  const sessionQuoters = quoterPinFromSession(signers, [
+    ...(sourceChains ?? []).map((chain) => chain.id),
+    targetChain.id,
+  ])
+  const resolvedQuoters = narrowQuoterPin(sessionQuoters, quoters)
+
   const metaIntent: IntentInput = {
     destinationChainId: targetChain.id,
     tokenRequests: tokenRequests.map((tokenRequest) => ({
@@ -1020,20 +1089,24 @@ async function prepareTransactionAsIntent(
       feeToken: feeAsset,
       appFees,
       customDeadline,
+      protocolFees,
       sponsorSettings: sponsored
         ? typeof sponsored === 'object'
           ? {
               gasSponsored: sponsored.gas,
               bridgeFeesSponsored: sponsored.bridging,
               swapFeesSponsored: sponsored.swaps,
+              protocolFeesSponsored: sponsored.protocolFees ?? false,
             }
           : {
               gasSponsored: sponsored,
               bridgeFeesSponsored: sponsored,
               swapFeesSponsored: sponsored,
+              protocolFeesSponsored: sponsored,
             }
         : undefined,
       settlementLayers,
+      ...(resolvedQuoters ? { quoters: resolvedQuoters } : {}),
       signatureMode,
       auxiliaryFunds,
     },
@@ -1087,6 +1160,15 @@ async function signIntent(
   const ownerValidator = getOwnerValidator(config)
   const isRoot = validator.address === ownerValidator.address
 
+  if (
+    isRoot &&
+    config.owners?.type === 'quorum' &&
+    origin.length > 1 &&
+    (!signers || (signers.type === 'owner' && signers.kind === 'quorum'))
+  ) {
+    return signQuorumIntentOrigins(config, origin, validator, isRoot, signers)
+  }
+
   const originSignatures: OriginSignature[] = []
   for (const typedData of origin) {
     const chain = getChainById(typedData.domain?.chainId as number)
@@ -1127,6 +1209,65 @@ async function signIntent(
   return {
     originSignatures,
     destinationSignature,
+  }
+}
+
+async function signQuorumIntentOrigins(
+  config: RhinestoneConfig,
+  origins: TypedDataDefinition[],
+  validator: Module,
+  isRoot: boolean,
+  signers: SignerSet | undefined,
+) {
+  if (config.owners?.type !== 'quorum') {
+    throw new Error('Quorum owner configuration is missing')
+  }
+  const address = getAddress(config)
+  const account = getAccountProvider(config)
+  const chains = origins.map((typedData) =>
+    getChainById(typedData.domain?.chainId as number),
+  )
+  const quorumSigners = signers ?? convertOwnerSetToSignerSet(config.owners)
+  if (quorumSigners.type !== 'owner' || quorumSigners.kind !== 'quorum') {
+    throw new Error('Quorum owners require quorum signers')
+  }
+  const tree = buildQuorumMerkleTree(
+    origins.map((typedData, index) => {
+      const hash = hashTypedData(typedData)
+      const accountHash =
+        account.type === 'kernel' ? wrapKernelMessageHash(hash, address) : hash
+      return {
+        account: address,
+        digest: getQuorumSignableHash({
+          validator: validator.address,
+          chainId: chains[index].id,
+          account: address,
+          hash: accountHash,
+        }),
+      }
+    }),
+  )
+  const signatures = await signQuorumHash(
+    quorumSigners,
+    config.owners,
+    undefined,
+    getQuorumMerkleRootSignableHash({
+      validator: validator.address,
+      root: tree.root,
+    }),
+  )
+  const originSignatures = await Promise.all(
+    tree.operations.map((operation) =>
+      packEip1271Signature(
+        config,
+        encodeQuorumMerkleSignature({ operation, signatures }),
+        { address: validator.address, isRoot },
+      ),
+    ),
+  )
+  return {
+    originSignatures,
+    destinationSignature: originSignatures.at(-1) as Hex,
   }
 }
 
@@ -1340,6 +1481,7 @@ async function signIntentTypedData<
         session: signers.session,
         verifyExecutions: true,
         enableData: signers.enableData,
+        useDevContracts: signers.useDevContracts,
       }
       // signWithSession (called inside getEmissarySignature) already calls packSignature
       // internally, so no transform is needed here
@@ -1352,6 +1494,7 @@ async function signIntentTypedData<
       verifyExecutions: false,
       enableData: signers.enableData,
       claimPolicyData,
+      useDevContracts: signers.useDevContracts,
     }
     const eip1271Signature = await getEip1271Signature(
       config,
@@ -1370,6 +1513,7 @@ async function signIntentTypedData<
         session: signers.session,
         verifyExecutions: true,
         enableData: signers.enableData,
+        useDevContracts: signers.useDevContracts,
       } satisfies ResolvedSessionSignerSet,
       chain,
       hash,
@@ -1488,6 +1632,7 @@ async function submitIntent(
   destinationSignature: Hex,
   targetExecutionSignature: Hex | undefined,
   authorizations: SignedAuthorizationList,
+  permitSignatures: SignedIntentOp['permitSignatures'],
   dryRun: boolean,
   intentInput?: unknown,
 ) {
@@ -1500,6 +1645,7 @@ async function submitIntent(
     destinationSignature,
     targetExecutionSignature,
     authorizations,
+    permitSignatures,
     dryRun,
     intentInput,
   )
@@ -1511,12 +1657,14 @@ function createSignedIntentOp(
   destinationSignature: Hex,
   targetExecutionSignature: Hex | undefined,
   authorizations: SignedAuthorizationList,
+  permitSignatures: SignedIntentOp['permitSignatures'],
 ): SignedIntentOp {
   return {
     ...intentOp,
     originSignatures,
     destinationSignature,
     targetExecutionSignature,
+    permitSignatures,
     signedAuthorizations:
       authorizations.length > 0
         ? authorizations.map((authorization) => ({
@@ -1540,6 +1688,7 @@ async function submitIntentInternal(
   destinationSignature: Hex,
   targetExecutionSignature: Hex | undefined,
   authorizations: SignedAuthorizationList,
+  permitSignatures: SignedIntentOp['permitSignatures'],
   dryRun: boolean,
   intentInput?: unknown,
 ) {
@@ -1549,6 +1698,7 @@ async function submitIntentInternal(
     destinationSignature,
     targetExecutionSignature,
     authorizations,
+    permitSignatures,
   )
   const isSponsored = !!(
     intentInput as { options?: { sponsorSettings?: unknown } } | undefined
@@ -1587,7 +1737,7 @@ async function getValidatorAccount(
   // Owners
   const withOwner = signers.type === 'owner' ? signers : null
   if (withOwner) {
-    return getSmartAccount(config, publicClient, chain)
+    return getSmartAccount(config, publicClient, chain, withOwner)
   }
 
   const withGuardians = signers.type === 'guardians' ? signers : null
@@ -1614,6 +1764,9 @@ function getValidator(
     // ECDSA
     if (withOwner.kind === 'ecdsa') {
       // Use the configured owner validator (e.g., ENS) rather than forcing Ownable
+      return getOwnerValidator(config)
+    }
+    if (withOwner.kind === 'quorum') {
       return getOwnerValidator(config)
     }
     // Passkeys (WebAuthn)
@@ -1957,6 +2110,7 @@ export {
   resolveSignatureMode,
   signAuthorizations,
   signAuthorizationsInternal,
+  signPermits,
   signIntent,
   signMessage,
   signTransaction,

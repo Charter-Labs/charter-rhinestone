@@ -11,10 +11,16 @@ import {
 } from '../modules/validators/core'
 import type {
   CalldataInput,
+  ENSValidatorConfig,
   LazyCallInput,
   OwnableValidatorConfig,
   WebauthnValidatorConfig,
 } from '../types'
+
+type MfaFactor =
+  | OwnableValidatorConfig
+  | ENSValidatorConfig
+  | WebauthnValidatorConfig
 
 type MultiFactorActionOptions = {
   module?: Address
@@ -32,7 +38,7 @@ function getMultiFactorAddress(options?: MultiFactorActionOptions): Address {
  * @returns Calls to enable multi-factor authentication
  */
 function enable(
-  validators: (OwnableValidatorConfig | WebauthnValidatorConfig | null)[],
+  validators: (MfaFactor | null)[],
   threshold = 1,
   options?: MultiFactorActionOptions,
 ): LazyCallInput {
@@ -99,7 +105,7 @@ function disable(options?: MultiFactorActionOptions): LazyCallInput {
  */
 function setSubValidator(
   id: Hex | number,
-  validator: OwnableValidatorConfig,
+  validator: OwnableValidatorConfig | ENSValidatorConfig,
   options?: MultiFactorActionOptions,
 ): CalldataInput
 function setSubValidator(
@@ -114,7 +120,7 @@ function setSubValidator(
 ): LazyCallInput
 function setSubValidator(
   id: Hex | number,
-  validator: OwnableValidatorConfig | WebauthnValidatorConfig,
+  validator: MfaFactor,
   options?: MultiFactorActionOptions,
 ): CalldataInput | LazyCallInput {
   const validatorId = padHex(toHex(id), { size: 12 })
@@ -174,7 +180,7 @@ function setSubValidator(
  */
 function removeSubValidator(
   id: Hex | number,
-  validator: OwnableValidatorConfig | WebauthnValidatorConfig,
+  validator: MfaFactor,
   options?: MultiFactorActionOptions,
 ): CalldataInput {
   const validatorId = padHex(toHex(id), { size: 12 })

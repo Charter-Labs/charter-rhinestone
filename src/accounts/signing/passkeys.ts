@@ -5,7 +5,10 @@ import {
   type Hex,
   hexToBytes,
   keccak256,
+  zeroAddress,
 } from 'viem'
+
+import { compareHexValues } from '../../modules/validators/ordering'
 
 interface WebAuthnSignature {
   authenticatorData: Hex
@@ -85,7 +88,7 @@ function packSignature(
     credId,
     webAuthn: webAuthns[index],
   }))
-  credIdsAndWebAuthns.sort((a, b) => a.credId.localeCompare(b.credId))
+  credIdsAndWebAuthns.sort((a, b) => compareHexValues(a.credId, b.credId))
   credIds = credIdsAndWebAuthns.map(({ credId }) => credId)
   webAuthns = credIdsAndWebAuthns.map(({ webAuthn }) => webAuthn)
   // Encode
@@ -131,6 +134,54 @@ function packSignature(
       },
     ],
     [credIds, usePrecompile, webAuthns],
+  )
+}
+
+function packStatelessSignature(
+  accounts: readonly { publicKey: Hex }[],
+  configuredAccounts: readonly { publicKey: Hex }[],
+  webAuthns: WebAuthnSignature[],
+): Hex {
+  const credentialId = (account: { publicKey: Hex }) => {
+    const { x, y } = parsePublicKey(account.publicKey)
+    return generateCredentialId(x, y, zeroAddress)
+  }
+  const configuredIds = configuredAccounts
+    .map(credentialId)
+    .sort(compareHexValues)
+  const ordered = accounts
+    .map((account, index) => ({
+      credentialId: credentialId(account),
+      webAuthn: webAuthns[index],
+    }))
+    .sort((a, b) => compareHexValues(a.credentialId, b.credentialId))
+  const expectedIds = configuredIds.slice(0, ordered.length)
+  if (
+    ordered.some(
+      ({ credentialId }, index) => credentialId !== expectedIds[index],
+    )
+  ) {
+    throw new Error(
+      'A passkey factor pairs each signature with the credential at the same position, so a partial signer set must be the lowest-ordered credentials of that factor',
+    )
+  }
+
+  return encodeAbiParameters(
+    [
+      {
+        type: 'tuple[]',
+        name: 'webAuthns',
+        components: [
+          { type: 'bytes', name: 'authenticatorData' },
+          { type: 'string', name: 'clientDataJSON' },
+          { type: 'uint256', name: 'challengeIndex' },
+          { type: 'uint256', name: 'typeIndex' },
+          { type: 'uint256', name: 'r' },
+          { type: 'uint256', name: 's' },
+        ],
+      },
+    ],
+    [ordered.map(({ webAuthn }) => webAuthn)],
   )
 }
 
@@ -243,6 +294,7 @@ export {
   parseSignature,
   generateCredentialId,
   packSignature,
+  packStatelessSignature,
   packSignatureV0,
   packWebAuthnAuths,
   WEBAUTHN_AUTH_ABI_COMPONENTS,

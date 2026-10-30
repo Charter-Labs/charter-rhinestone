@@ -1,5 +1,5 @@
 import { zeroAddress } from 'viem'
-import { arbitrum, base, mainnet, optimism } from 'viem/chains'
+import { arbitrum, base, mainnet, optimism, sepolia } from 'viem/chains'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { accountA } from '../../test/consts'
 import * as validators from '../modules/validators'
@@ -7,6 +7,7 @@ import {
   DUMMY_PRECLAIMOP_SELECTOR,
   DUMMY_PRECLAIMOP_TARGET,
 } from '../modules/validators'
+import { zeroEx } from '../modules/validators/smart-sessions'
 import {
   type IntentInput,
   SIG_MODE_EMISSARY_EXECUTION_ERC1271,
@@ -15,6 +16,8 @@ import {
 import type { RhinestoneConfig, SessionSignerSet, SignerSet } from '../types'
 import {
   hashErc7739TypedDataForSolady,
+  parseCalls,
+  prepareTransaction,
   prepareTransactionAsIntent,
   resolveSessionForChain,
   resolveSignatureMode,
@@ -143,6 +146,20 @@ describe('hashErc7739TypedDataForSolady', () => {
   })
 })
 
+describe('parseCalls', () => {
+  test('accepts a mis-checksummed call target', () => {
+    const target = '0x035ae6188AC22ab79B5018039DFbDA4FFE7990e9'
+
+    expect(parseCalls([{ to: target }], sepolia.id)).toEqual([
+      {
+        data: '0x',
+        value: 0n,
+        to: target,
+      },
+    ])
+  })
+})
+
 describe('prepareTransactionAsIntent', () => {
   beforeEach(() => {
     mockGetIntentRoute.mockReset()
@@ -220,6 +237,128 @@ describe('prepareTransactionAsIntent', () => {
     expect(mockGetIntentRoute).toHaveBeenCalledOnce()
     const intentInput: IntentInput = mockGetIntentRoute.mock.calls[0][0]
     expect(intentInput.options.auxiliaryFunds).toBeUndefined()
+  })
+
+  test('forwards the public transaction quoter filter to the wire', async () => {
+    mockGetIntentRoute.mockResolvedValue({
+      intentOp: {},
+      intentCost: {},
+    })
+
+    await prepareTransaction(
+      {
+        owners: { type: 'ecdsa', accounts: [accountA], threshold: 1 },
+        apiKey: 'test',
+      },
+      {
+        chain: base,
+        quoters: { exclude: ['relay'] },
+      },
+    )
+
+    const intentInput: IntentInput = mockGetIntentRoute.mock.calls[0][0]
+    expect(intentInput.options.quoters).toEqual({ exclude: ['relay'] })
+  })
+
+  test('derives and narrows a session quoter filter on the wire', async () => {
+    mockGetIntentRoute.mockResolvedValue({
+      intentOp: {},
+      intentCost: {},
+    })
+    const enabled = vi
+      .spyOn(validators, 'isSessionEnabled')
+      .mockResolvedValue(true)
+
+    try {
+      await prepareTransactionAsIntent(
+        {
+          owners: { type: 'ecdsa', accounts: [accountA], threshold: 1 },
+          apiKey: 'test',
+        },
+        [base],
+        base,
+        [],
+        undefined,
+        [{ address: zeroAddress, amount: 1n }],
+        undefined,
+        false,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        {
+          type: 'experimental_session',
+          session: {
+            chain: base,
+            owners: { type: 'ecdsa', accounts: [accountA] },
+            swap: {
+              sell: {
+                token: '0x1111111111111111111111111111111111111111',
+              },
+              buy: {
+                token: '0x2222222222222222222222222222222222222222',
+              },
+              to: '0x3333333333333333333333333333333333333333',
+              via: [
+                zeroEx({
+                  settler: '0x4444444444444444444444444444444444444444',
+                }),
+              ],
+            },
+          },
+        },
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        { include: ['0x', 'relay'] },
+      )
+    } finally {
+      enabled.mockRestore()
+    }
+
+    const intentInput: IntentInput = mockGetIntentRoute.mock.calls[0][0]
+    expect(intentInput.options.quoters).toEqual({ include: ['0x'] })
+  })
+
+  test('preserves an empty quoter include filter on the wire', async () => {
+    mockGetIntentRoute.mockResolvedValue({
+      intentOp: {},
+      intentCost: {},
+    })
+
+    await prepareTransactionAsIntent(
+      {
+        owners: { type: 'ecdsa', accounts: [accountA], threshold: 1 },
+        apiKey: 'test',
+      },
+      [arbitrum],
+      base,
+      [],
+      undefined,
+      [{ address: zeroAddress, amount: 1n }],
+      undefined,
+      false,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      { include: [] },
+    )
+
+    const intentInput: IntentInput = mockGetIntentRoute.mock.calls[0][0]
+    expect(intentInput.options.quoters).toEqual({ include: [] })
   })
 
   test('includes appFees in options when provided', async () => {
@@ -328,6 +467,124 @@ describe('prepareTransactionAsIntent', () => {
     expect(mockGetIntentRoute).toHaveBeenCalledOnce()
     const intentInput: IntentInput = mockGetIntentRoute.mock.calls[0][0]
     expect(intentInput.options.customDeadline).toBeUndefined()
+  })
+
+  test('includes protocolFees in options when provided (RHI-4904)', async () => {
+    mockGetIntentRoute.mockResolvedValue({
+      intentOp: {},
+      intentCost: {},
+    })
+
+    await prepareTransactionAsIntent(
+      {
+        owners: { type: 'ecdsa', accounts: [accountA], threshold: 1 },
+        apiKey: 'test',
+      },
+      [arbitrum],
+      base,
+      [],
+      undefined,
+      [{ address: zeroAddress, amount: 1n }],
+      undefined,
+      false,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      { feeBps: 35 },
+    )
+
+    expect(mockGetIntentRoute).toHaveBeenCalledOnce()
+    const intentInput: IntentInput = mockGetIntentRoute.mock.calls[0][0]
+    expect(intentInput.options.protocolFees).toEqual({ feeBps: 35 })
+    expect(intentInput.options.appFees).toBeUndefined()
+  })
+
+  test('maps sponsored.protocolFees onto sponsorSettings (RHI-4904)', async () => {
+    mockGetIntentRoute.mockResolvedValue({
+      intentOp: {},
+      intentCost: {},
+    })
+
+    await prepareTransactionAsIntent(
+      {
+        owners: { type: 'ecdsa', accounts: [accountA], threshold: 1 },
+        apiKey: 'test',
+      },
+      [arbitrum],
+      base,
+      [],
+      undefined,
+      [{ address: zeroAddress, amount: 1n }],
+      undefined,
+      { gas: false, bridging: false, swaps: false, protocolFees: true },
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      { feeBps: 35 },
+    )
+
+    const intentInput: IntentInput = mockGetIntentRoute.mock.calls[0][0]
+    expect(intentInput.options.sponsorSettings).toEqual({
+      gasSponsored: false,
+      bridgeFeesSponsored: false,
+      swapFeesSponsored: false,
+      protocolFeesSponsored: true,
+    })
+  })
+
+  test('boolean sponsored: true enables protocolFeesSponsored too (RHI-4904)', async () => {
+    mockGetIntentRoute.mockResolvedValue({
+      intentOp: {},
+      intentCost: {},
+    })
+
+    await prepareTransactionAsIntent(
+      {
+        owners: { type: 'ecdsa', accounts: [accountA], threshold: 1 },
+        apiKey: 'test',
+      },
+      [arbitrum],
+      base,
+      [],
+      undefined,
+      [{ address: zeroAddress, amount: 1n }],
+      undefined,
+      true,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+    )
+
+    const intentInput: IntentInput = mockGetIntentRoute.mock.calls[0][0]
+    expect(intentInput.options.sponsorSettings).toEqual({
+      gasSponsored: true,
+      bridgeFeesSponsored: true,
+      swapFeesSponsored: true,
+      protocolFeesSponsored: true,
+    })
   })
 
   test('claim-only session sends SIG_MODE_ERC1271 in routing request', async () => {

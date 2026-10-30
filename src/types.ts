@@ -4,7 +4,9 @@ import type { ModuleType } from './modules/common'
 import type {
   AppFeeRate,
   AuxiliaryFunds,
+  ProtocolFeeRate,
   SettlementLayer,
+  SwapQuoterFilter,
 } from './orchestrator/types'
 
 type AccountType =
@@ -42,6 +44,7 @@ interface KernelAccount {
 
 interface StartaleAccount {
   type: 'startale'
+  version?: '1.0.0' | '1.0.1'
   salt?: Hex
 }
 
@@ -75,6 +78,25 @@ interface OwnableValidatorConfig {
   accounts: Account[]
   threshold?: number
   module?: Address
+}
+
+/** One Quorum Signer owner and its non-zero voting weight. */
+interface QuorumOwner {
+  /** Viem account used to sign this owner's raw operation digest. */
+  account: Account
+  /** Weight contributed by a valid signature from this owner. */
+  weight: bigint
+}
+
+/** Configure a weighted Quorum Signer validator deployed at `module`. */
+interface QuorumValidatorConfig {
+  type: 'quorum'
+  /** Weighted EOA or EIP-1271 owners. The SDK can sign configured EOA accounts. */
+  owners: QuorumOwner[]
+  /** Minimum combined owner weight required to authorize an operation. */
+  thresholdWeight: bigint
+  /** Deployed Quorum Signer validator address shared by the account's chains. */
+  module: Address
 }
 
 interface ENSValidatorConfig {
@@ -134,6 +156,7 @@ type PaymasterConfig =
 
 type OwnerSet =
   | OwnableValidatorConfig
+  | QuorumValidatorConfig
   | ENSValidatorConfig
   | WebauthnValidatorConfig
   | MultiFactorValidatorConfig
@@ -153,6 +176,21 @@ interface UniversalActionPolicyParamRule {
   calldataOffset: bigint
   usageLimit?: bigint
   referenceValue: Hex | bigint
+}
+
+type ArgPolicyExpression =
+  | { type: 'rule'; rule: UniversalActionPolicyParamRule }
+  | { type: 'not'; child: ArgPolicyExpression }
+  | {
+      type: 'and' | 'or'
+      left: ArgPolicyExpression
+      right: ArgPolicyExpression
+    }
+
+interface ArgPolicy {
+  type: 'arg-policy'
+  valueLimitPerUse?: bigint
+  expression: ArgPolicyExpression
 }
 
 type UniversalActionPolicyParamCondition =
@@ -213,6 +251,7 @@ interface Permit2ClaimPolicy {
 type Policy =
   | SudoPolicy
   | UniversalActionPolicy
+  | ArgPolicy
   | SpendingLimitsPolicy
   | TimeFramePolicy
   | UsageLimitPolicy
@@ -231,10 +270,56 @@ interface ScopedAction {
 
 type Action = FallbackAction | ScopedAction
 
+interface ZeroExVenue {
+  readonly id: '0x'
+  readonly settler?: Address
+  readonly anySettler?: boolean
+  readonly maxSpend?: bigint
+}
+
+interface FyndVenue {
+  readonly id: 'fynd'
+  readonly maxSpend?: bigint
+}
+
+interface RhinestoneSwapVenue {
+  readonly id: 'rhinestone'
+  readonly maxSpend?: bigint
+}
+
+interface RoutedRhinestoneSwapVenue extends RhinestoneSwapVenue {
+  readonly route?: 'zeroEx' | 'fynd'
+  readonly routes?: readonly ('zeroEx' | 'fynd')[]
+  readonly settler?: Address
+}
+
+type SwapVenue = RhinestoneSwapVenue | ZeroExVenue | FyndVenue
+
+interface SwapScope {
+  readonly sell: {
+    readonly token: Address
+    /** Cumulative spend cap. Strongly recommended for reusable sessions. */
+    readonly maxTotal?: bigint
+  }
+  readonly buy: { readonly token: Address }
+  /** Output recipient pinned by the on-chain action policy. */
+  readonly to: Address
+  /**
+   * Allowed venues. Defaults to the aggregator-agnostic Rhinestone Swapper.
+   * Its route and minimum output remain caller-controlled, so use `maxTotal`
+   * to bound loss or name a venue to pin the route.
+   */
+  readonly via?: readonly SwapVenue[]
+}
+
 interface SessionInput {
   owners: OwnerSet
   actions?: Action[]
   claimPolicies?: [Permit2ClaimPolicy]
+  /** Remove the permissive fallback and allow only explicitly scoped actions. */
+  restrictToActions?: boolean
+  /** Restrict this session to swaps matching the declared tokens and recipient. */
+  swap?: SwapScope
 }
 
 interface Session extends SessionInput {
@@ -396,6 +481,11 @@ type OwnerSignerSet =
     }
   | {
       type: 'owner'
+      kind: 'quorum'
+      accounts: Account[]
+    }
+  | {
+      type: 'owner'
       kind: 'passkey'
       accounts: WebAuthnAccount[]
       module?: Address
@@ -461,6 +551,7 @@ type Sponsorship =
       gas: boolean
       bridging: boolean
       swaps: boolean
+      protocolFees?: boolean
     }
 
 interface BaseTransaction {
@@ -496,7 +587,9 @@ interface BaseTransaction {
    * claim/nonce expiry track this value automatically.
    */
   customDeadline?: number
+  protocolFees?: ProtocolFeeRate
   settlementLayers?: SettlementLayer[]
+  quoters?: SwapQuoterFilter
   lockFunds?: boolean
   auxiliaryFunds?: AuxiliaryFunds
   experimental_accountOverride?: {
@@ -529,6 +622,7 @@ export type {
   AccountProviderConfig,
   AccountType,
   Action,
+  ArgPolicyExpression,
   ApiKeyAuth,
   AuthConfig,
   BundlerConfig,
@@ -555,10 +649,14 @@ export type {
   Permit2ClaimPolicy,
   Policy,
   ProviderConfig,
+  QuorumOwner,
+  QuorumValidatorConfig,
+  ScopedAction,
   Recovery,
   RhinestoneAccountConfig,
   RhinestoneConfig,
   RhinestoneSDKConfig,
+  RoutedRhinestoneSwapVenue,
   SafeAccount,
   Session,
   SessionEnableData,
@@ -569,11 +667,17 @@ export type {
   SourceAssetInput,
   Sponsorship,
   StartaleAccount,
+  SwapScope,
+  SwapVenue,
+  ZeroExVenue,
+  FyndVenue,
+  RhinestoneSwapVenue,
   TokenRequest,
   TokenRequests,
   TokenSymbol,
   Transaction,
   UniversalActionPolicyParamCondition,
+  UniversalActionPolicyParamRule,
   UserOperationTransaction,
   WebauthnValidatorConfig,
 }

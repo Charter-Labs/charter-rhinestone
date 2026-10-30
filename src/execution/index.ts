@@ -19,7 +19,12 @@ import {
   getSupportedChainIds,
   isTestnet,
 } from '../orchestrator/registry'
-import type { AppFeeRate, SettlementLayer } from '../orchestrator/types'
+import type {
+  AppFeeRate,
+  ProtocolFeeRate,
+  SettlementLayer,
+  SwapQuoterFilter,
+} from '../orchestrator/types'
 import type {
   CalldataInput,
   CallInput,
@@ -53,6 +58,7 @@ import {
   resolveCallInputs,
   signAuthorizationsInternal,
   signIntent,
+  signPermits,
   submitIntentInternal,
 } from './utils'
 
@@ -92,10 +98,12 @@ async function sendTransaction(
     sponsored,
     eip7702InitSignature,
     settlementLayers,
+    quoters,
     sourceAssets,
     feeAsset,
     appFees,
     customDeadline,
+    protocolFees,
   } = transaction
   const isUserOpSigner = signers?.type === 'guardians'
   if (isUserOpSigner) {
@@ -111,10 +119,12 @@ async function sendTransaction(
     sponsored,
     eip7702InitSignature,
     settlementLayers,
+    quoters,
     sourceAssets,
     feeAsset,
     appFees,
     customDeadline,
+    protocolFees,
   })
 }
 
@@ -151,11 +161,13 @@ async function sendTransactionInternal(
     sponsored?: Sponsorship
     eip7702InitSignature?: Hex
     settlementLayers?: SettlementLayer[]
+    quoters?: SwapQuoterFilter
     sourceAssets?: SourceAssetInput
     lockFunds?: boolean
     feeAsset?: Address | TokenSymbol
     appFees?: AppFeeRate
     customDeadline?: number
+    protocolFees?: ProtocolFeeRate
   },
 ) {
   const accountAddress = getAddress(config)
@@ -192,6 +204,8 @@ async function sendTransactionInternal(
       options.sourceCalls,
       options.appFees,
       options.customDeadline,
+      options.protocolFees,
+      options.quoters,
     )
   }
 }
@@ -248,6 +262,8 @@ async function sendTransactionAsIntent(
   sourceCalls?: Record<number, CallInput[]>,
   appFees?: AppFeeRate,
   customDeadline?: number,
+  protocolFees?: ProtocolFeeRate,
+  quoters?: SwapQuoterFilter,
 ) {
   const prepared = await prepareTransactionAsIntent(
     config,
@@ -269,6 +285,8 @@ async function sendTransactionAsIntent(
     sourceCalls,
     appFees,
     customDeadline,
+    protocolFees,
+    quoters,
   )
   if (!prepared) {
     throw new OrderPathRequiredForIntentsError()
@@ -289,6 +307,7 @@ async function sendTransactionAsIntent(
   const authorizations = config.eoa
     ? await signAuthorizationsInternal(config, intentRoute)
     : []
+  const permitSignatures = await signPermits(config, intentRoute)
   return await submitIntentInternal(
     config,
     sourceChains,
@@ -298,6 +317,7 @@ async function sendTransactionAsIntent(
     destinationSignature,
     targetExecutionSignature,
     authorizations,
+    permitSignatures,
     false,
     intentInput,
   )

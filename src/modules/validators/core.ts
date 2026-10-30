@@ -3,13 +3,16 @@ import {
   type Address,
   bytesToHex,
   concat,
+  decodeAbiParameters,
   encodeAbiParameters,
   encodePacked,
   type Hex,
   hexToBytes,
+  keccak256,
   maxUint48,
   pad,
   toHex,
+  zeroAddress,
 } from 'viem'
 
 import {
@@ -25,6 +28,8 @@ import type {
   WebauthnValidatorConfig,
 } from '../../types'
 import { MODULE_TYPE_ID_VALIDATOR, type Module } from '../common'
+import { compareHexValues } from './ordering'
+import { getQuorumMockSignature, getQuorumValidator } from './quorum'
 
 const SMART_SESSION_EMISSARY_ADDRESS_DEV: Address =
   '0x60731de80d78548875f8a67c4fec2a8660194e0c'
@@ -65,9 +70,8 @@ const ECDSA_MOCK_SIGNATURE =
 const WEBAUTHN_MOCK_SIGNATURE =
   '0x0000000000000000000000000000000000000000000000000000000000000060000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000a00000000000000000000000000000000000000000000000000000000000000001b9b86eb98fda3ed4d797d9e690588dfadf17b329a76a47cec935bebf92d7ddc80000000000000000000000000000000000000000000000000000000000000001000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000c00000000000000000000000000000000000000000000000000000000000000120000000000000000000000000000000000000000000000000000000000000001700000000000000000000000000000000000000000000000000000000000000019b2e9410bb6850f9f660a03d609d5a844fb96bcdc87a15139b03ee22c70f469100d2b865a215c3bf786387064effa8fcedcb1d625b5148f8a1236d5e3ff11acf000000000000000000000000000000000000000000000000000000000000002549960de5880e8c687434170f6476605b8fe4aeb9a28632c7995cf3ba831d9763050000000100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000867b2274797065223a22776562617574686e2e676574222c226368616c6c656e6765223a22396a4546696a75684557724d34534f572d7443684a625545484550343456636a634a2d42716f3166544d38222c226f726967696e223a22687474703a2f2f6c6f63616c686f73743a38303830222c2263726f73734f726967696e223a66616c73657d0000000000000000000000000000000000000000000000000000'
 
-// ENS validation is only available on HCA accounts (its validator default is
-// the HCA module). True for a direct ENS owner set or an ENS sub-validator
-// nested in a multi-factor config.
+// True for a direct ENS owner set or an ENS sub-validator nested in a
+// multi-factor config. Smart Sessions use this to reject both shapes.
 function ownerSetUsesEns(owners: OwnerSet): boolean {
   return (
     owners.type === 'ens' ||
@@ -80,9 +84,9 @@ function getOwnerValidator(config: RhinestoneAccountConfig) {
   if (!config.owners) {
     throw new OwnersFieldRequiredError()
   }
-  // ENS owners resolve to the HCA module, which is only valid for HCA accounts.
-  // Other account types would silently install/sign against the wrong validator.
-  if (ownerSetUsesEns(config.owners) && config.account?.type !== 'hca') {
+  // Direct ENS owners resolve to the HCA module, which is only valid for HCA
+  // accounts. Nested ENS factors use the module's stateless validation path.
+  if (config.owners.type === 'ens' && config.account?.type !== 'hca') {
     throw new AccountConfigurationNotSupportedError(
       'ENS owners are only supported on HCA accounts',
       config.account?.type ?? 'nexus',
@@ -100,6 +104,8 @@ function getMockSignature(ownerSet: OwnerSet): Hex {
       const signatures = owners.map(() => ECDSA_MOCK_SIGNATURE as Hex)
       return concat(signatures)
     }
+    case 'quorum':
+      return getQuorumMockSignature(ownerSet)
     case 'passkey':
       return WEBAUTHN_MOCK_SIGNATURE
     case 'multi-factor': {
@@ -108,7 +114,10 @@ function getMockSignature(ownerSet: OwnerSet): Hex {
         data: Hex
       }[] = ownerSet.validators.map((validator, index) => {
         const validatorModule = getValidator(validator)
-        const signature = getMockSignature(validator)
+        const signature =
+          validator.type === 'passkey'
+            ? getStatelessWebAuthnMockSignature()
+            : getMockSignature(validator)
         return {
           packedValidatorAndId: encodePacked(
             ['bytes12', 'address'],
@@ -152,6 +161,8 @@ function getValidator(owners: OwnerSet) {
         owners.accounts.map((account) => account.address),
         owners.module,
       )
+    case 'quorum':
+      return getQuorumValidator(owners)
     case 'ens':
       // ENS validation is baked into the HCA account implementation, so the
       // module address is fixed (no override).
@@ -177,6 +188,31 @@ function getValidator(owners: OwnerSet) {
       )
     }
   }
+}
+
+const WEBAUTHN_AUTH_ABI = {
+  type: 'tuple[]',
+  name: 'webAuthns',
+  components: [
+    { type: 'bytes', name: 'authenticatorData' },
+    { type: 'string', name: 'clientDataJSON' },
+    { type: 'uint256', name: 'challengeIndex' },
+    { type: 'uint256', name: 'typeIndex' },
+    { type: 'uint256', name: 'r' },
+    { type: 'uint256', name: 's' },
+  ],
+} as const
+
+function getStatelessWebAuthnMockSignature(): Hex {
+  const [, , webAuthns] = decodeAbiParameters(
+    [
+      { type: 'bytes32[]', name: 'credIds' },
+      { type: 'bool', name: 'usePrecompile' },
+      WEBAUTHN_AUTH_ABI,
+    ],
+    WEBAUTHN_MOCK_SIGNATURE,
+  )
+  return encodeAbiParameters([WEBAUTHN_AUTH_ABI], [webAuthns])
 }
 
 function getOwnableValidator(
@@ -216,7 +252,9 @@ function getENSValidator(
   }))
 
   // Sort by address to match ENS validator's expectations
-  const sortedPairs = ownerPairs.sort((a, b) => a.addr.localeCompare(b.addr))
+  const sortedPairs = ownerPairs.sort((a, b) =>
+    compareHexValues(a.addr, b.addr),
+  )
 
   const ownersWithExpiration = sortedPairs
 
@@ -381,6 +419,96 @@ function buildWebAuthnMFAStoredData(
   )
 }
 
+function getStatelessValidatorData(
+  validator:
+    | OwnableValidatorConfig
+    | ENSValidatorConfig
+    | WebauthnValidatorConfig,
+): Hex {
+  switch (validator.type) {
+    case 'ecdsa':
+      return getOwnableValidator(
+        validator.threshold ?? 1,
+        validator.accounts.map((account) => account.address),
+      ).initData
+    case 'ens':
+      return encodeAbiParameters(
+        [
+          { name: 'threshold', type: 'uint256' },
+          { name: 'owners', type: 'address[]' },
+        ],
+        [
+          BigInt(validator.threshold ?? 1),
+          validator.accounts
+            .map((account) => account.address.toLowerCase() as Address)
+            .sort((a, b) => compareHexValues(a, b)),
+        ],
+      )
+    case 'passkey': {
+      const credentials = validator.accounts
+        .map((account) => {
+          const publicKey = parsePublicKey(account.publicKey)
+          if (publicKey.prefix && publicKey.prefix !== 4) {
+            throw new Error('Only uncompressed public keys are supported')
+          }
+          const credentialId = keccak256(
+            encodeAbiParameters(
+              [{ type: 'uint256' }, { type: 'uint256' }, { type: 'address' }],
+              [publicKey.x, publicKey.y, zeroAddress],
+            ),
+          )
+          return {
+            credentialId,
+            credentialData: {
+              pubKeyX: publicKey.x,
+              pubKeyY: publicKey.y,
+              requireUV: false,
+            },
+          }
+        })
+        .sort((a, b) => compareHexValues(a.credentialId, b.credentialId))
+
+      return encodeAbiParameters(
+        [
+          {
+            name: 'context',
+            type: 'tuple',
+            components: [
+              { name: 'usePrecompile', type: 'bool' },
+              { name: 'threshold', type: 'uint256' },
+              { name: 'credentialIds', type: 'bytes32[]' },
+              {
+                name: 'credentialData',
+                type: 'tuple[]',
+                components: [
+                  { name: 'pubKeyX', type: 'uint256' },
+                  { name: 'pubKeyY', type: 'uint256' },
+                  { name: 'requireUV', type: 'bool' },
+                ],
+              },
+            ],
+          },
+          { name: 'account', type: 'address' },
+        ],
+        [
+          {
+            usePrecompile: false,
+            threshold: BigInt(validator.threshold ?? 1),
+            credentialIds: credentials.map(({ credentialId }) => credentialId),
+            credentialData: credentials.map(
+              ({ credentialData }) => credentialData,
+            ),
+          },
+          zeroAddress,
+        ],
+      )
+    }
+  }
+}
+
+// Charter: multi-factor is installed after deployment, so passkey factors are
+// stored with credential IDs scoped to the account address. Without an account
+// address (e.g. counterfactual init data) use the upstream stateless format.
 function getMultiFactorSubValidatorData(
   validator:
     | OwnableValidatorConfig
@@ -388,15 +516,8 @@ function getMultiFactorSubValidatorData(
     | WebauthnValidatorConfig,
   accountAddress?: Address,
 ): Hex {
-  if (validator.type !== 'passkey') {
-    return getValidator(validator).initData
-  }
-
-  if (!accountAddress) {
-    throw new Error(
-      'accountAddress is required when a passkey subvalidator is present. ' +
-        'The deployed WebAuthn validator stores credential IDs scoped to the account address.',
-    )
+  if (validator.type !== 'passkey' || !accountAddress) {
+    return getStatelessValidatorData(validator)
   }
 
   const publicKeys = validator.accounts.map((account) => {
@@ -485,8 +606,11 @@ function getSocialRecoveryValidator(
   guardians: Account[],
   threshold = 1,
 ): Module {
-  const guardianAddresses = guardians.map((guardian) => guardian.address)
-  guardianAddresses.sort()
+  // Lowercase before sorting: checksum casing would otherwise order `0xB5…`
+  // before `0xb4…`, which the validator rejects as unsorted.
+  const guardianAddresses = guardians
+    .map((guardian) => guardian.address.toLowerCase() as Address)
+    .sort()
   return {
     type: MODULE_TYPE_ID_VALIDATOR,
     address: SOCIAL_RECOVERY_VALIDATOR_ADDRESS,
@@ -548,6 +672,7 @@ export {
   getMultiFactorValidator,
   buildWebAuthnMFAStoredData,
   getMultiFactorSubValidatorData,
+  getStatelessValidatorData,
   getSocialRecoveryValidator,
   getValidator,
   getMockSignature,

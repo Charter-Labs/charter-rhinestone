@@ -1,5 +1,130 @@
 # @rhinestone/sdk
 
+## 1.22.0
+
+### Minor Changes
+
+- fe851bf: EOA accounts sign the ERC-2612 permit the orchestrator offers in `tokenRequirements[chainId][token].permit` and submit it with the intent, in place of the onchain Permit2 approve. `signTransaction` returns them as `permitSignatures`, and `sendTransaction` signs them too. Where a permit is offered, skip the approve transaction.
+
+## 1.21.0
+
+### Minor Changes
+
+- 3e59c5f: Startale now defaults to v1.0.1, which deploys a new implementation and factory and changes the default counterfactual account address. Existing v1.0.0 accounts must opt back in with `account: { type: 'startale', version: '1.0.0' }` to keep their address — including accounts passed as address-only `initData`, whose typed-data signatures would otherwise target the v1.0.1 domain. Accounts restored from `initData` with a `factory` keep their version automatically.
+
+## 1.20.0
+
+### Minor Changes
+
+- 57ffcd0: Add opt-in support for Startale v1.0.1 via `account: { type: 'startale', version: '1.0.1' }`. Startale v1.0.0 stays the default.
+
+## 1.19.1
+
+### Patch Changes
+
+- b9e25b5: Scope `fynd()` swap sessions to fynd's TychoRouter V3 deployment and its `singleSwap` calldata, in both the direct router call and the Swapper-wrapped one. The router they previously named is paused and fynd no longer fills through it.
+
+  A session built with `fynd()` on an earlier v1 version authorises only that router and its old argument layout, so it cannot execute fynd swaps. Re-create it with this version and enable it again.
+
+  Backport of the same change on v2.
+
+## 1.19.0
+
+### Minor Changes
+
+- 3e32204: Remove `saltMode`. A restricted session's salt hashes the actions alone, which
+  is what it did by default; an unrestricted one stays on `zeroHash`.
+
+  `'v1'` only ever named that default. `'strict'` was meant to let a session
+  built here be rebuilt on 2.x, but the majors also pin different policy
+  addresses, so matching the salt still left the digest different — and a
+  session built with it matched neither shape the deposit service rebuilds,
+  failing every deposit for that account.
+
+  **This is a breaking type change shipped in a minor, deliberately.** Removing
+  an exported field warrants a major, and this line has none left: a major from
+  1.x is 2.0.0, which is published and belongs to the next major. The option was
+  released this morning in 1.18.0, produces sessions that cannot be settled, and
+  has no adopters, so removing it is judged safer than leaving it reachable.
+  Anyone who did set it should drop it; the default was always the behaviour
+  they wanted.
+
+## 1.18.0
+
+### Minor Changes
+
+- 2ea50bb: Add `saltMode` to opt a restricted session's salt into the 2.x derivation.
+
+  Additive and off by default: without it the salt stays the actions-only hash this SDK already produces, so every existing session's digest, permissionId and stored signature are unchanged.
+
+  A session's permissionId is `keccak(sessionValidator, sessionValidatorInitData, salt)`, and on-chain `enable` adds to the policy list rather than replacing it — so two sessions sharing a permissionId union rather than one superseding the other. The default salt hashes the actions alone, which is enough to keep restricted sessions apart here: a restricted session throws on `claimPolicies` and has its ERC-1271 and ERC-7739 config forced empty, so no two of them can differ by anything else.
+
+  `'strict'` hashes those fields anyway, with actions in a canonical order, matching the 2.x derivation exactly. That is what it is for: a scoped session built here can then be rebuilt on 2.x — as the deposit service does — and land on the same digest.
+
+## 1.17.0
+
+### Minor Changes
+
+- 6dca7c3: Allow an optional `maxSpend` alongside a pinned 0x Settler, and export `ZEROX_CHAIN_IDS` from `@rhinestone/sdk/actions/smart-sessions`.
+
+  `ZeroExPinnedOptions.maxSpend` was typed `never`, so pinning the Settler and setting a spend ceiling were mutually exclusive. The pin is what bounds a compromised session key — a cap is mandatory only on the `anySettler` variant, where it is the sole bound — but a caller can still want a ceiling on its own terms.
+
+  `ZEROX_CHAIN_IDS` joins the exported surface because resolving a Settler means knowing which chains 0x serves first, and the alternative is duplicating the list downstream where it drifts.
+
+  Backport of the same change on v2.
+
+## 1.16.0
+
+### Minor Changes
+
+- dc50c94: Type the bridge refund on `IntentOpStatus`, so a failed cross-chain intent can say where the funds went back to.
+
+  The orchestrator serves `refunds: [{ chain, txHash }]` on the alps wire this SDK requests, and `getIntentOpStatus` returns the response body as-is — so the value has always arrived once the orchestrator sends it, and only the type omitted it. Reading it no longer needs a cast. `IntentRefund` is exported.
+
+  A refunded intent stays `FAILED`: it did not do what was asked, and the refund says where the money went rather than that it succeeded. The key is **absent** when no refund is known, which is not the same fact as "there was none" — a refund is recorded only where a settlement layer evidences it with a transaction.
+
+## 1.15.0
+
+### Minor Changes
+
+- e86ef1c: Add weighted Quorum Signer configuration, signing flows, and headless signing helpers.
+
+## 1.14.0
+
+### Minor Changes
+
+- 23b5583: Add venue-scoped smart sessions for Rhinestone Swapper, 0x, and fynd routes, with cumulative sell caps, pinned tokens and recipients, and automatic quoter filtering for intent requests. Transactions can also set an explicit `quoters` include or exclude filter.
+
+## 1.13.4
+
+### Patch Changes
+
+- bc5ac75: Fix passkey and ENS validators nested under multi-factor owners by using their stateless configuration and signature formats. Counterfactual addresses change for multi-factor accounts containing passkey or ENS factors; direct passkey and ENS owners and ECDSA-only multi-factor accounts remain unchanged. Deployed accounts can replace affected factors with `mfa.setSubValidator`; ENS expiration is not enforced for nested factors.
+
+## 1.13.3
+
+### Patch Changes
+
+- 49ffe76: Order ENS owners, WebAuthn credential IDs, and recovery guardians by address value instead of host collation or checksum casing, so the same account config derives the same address on locales such as `da`, `nb`, and `no`, multi-passkey signatures stay valid, and social recovery installs no longer revert for guardian sets whose casing inverts their value order.
+
+## 1.13.2
+
+### Patch Changes
+
+- 7ecb46d: Use the installed default validator when signing with Rhinestone Nexus 1.2.0 accounts.
+
+## 1.13.1
+
+### Patch Changes
+
+- f21f7fa: Accept mis-checksummed EVM addresses when resolving call targets and token inputs instead of reporting them as unsupported token symbols.
+
+## 1.13.0
+
+### Minor Changes
+
+- a8c5120: Add the `protocolFees` transaction option to configure the Rhinestone protocol fee, and support sponsoring it via `sponsored.protocolFees`.
+
 ## 1.12.0
 
 ### Minor Changes

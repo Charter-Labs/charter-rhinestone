@@ -4,8 +4,10 @@ import { describe, expect, test } from 'vitest'
 import { accountA, accountB, passkeyAccount } from '../../test/consts'
 import { assertNotNull } from '../../test/utils/utils'
 import { MODULE_TYPE_ID_VALIDATOR } from '../modules/common'
+import { OWNABLE_VALIDATOR_ADDRESS } from '../modules/validators/core'
 import {
   getAddress,
+  getDefaultValidatorAddress,
   getDeployArgs,
   getInstallData,
   packSignature,
@@ -188,6 +190,66 @@ describe('Accounts: Nexus', () => {
       expect(address).toEqual('0x68484B775e4a2828A50C7404ce8530f146d5598e')
     })
 
+    test('multi-factor passkey addresses deliberately match v2 on 1.2.1', () => {
+      // Correct stateless factor data moves the old threshold-1/2 addresses
+      // 0x8bdf… and 0xc692…; those counterfactual paths could not validate.
+      const owners = {
+        type: 'multi-factor',
+        validators: [
+          { type: 'ecdsa', accounts: [accountA] },
+          { type: 'passkey', accounts: [passkeyAccount] },
+        ],
+      } as const
+
+      expect(
+        getAddress({
+          owners,
+          account: { type: 'nexus', version: '1.2.1' },
+        }),
+      ).toEqual('0x7953332B34329A9B3D6789a546Dc804475732D01')
+      expect(
+        getAddress({
+          owners: { ...owners, threshold: 2 },
+          account: { type: 'nexus', version: '1.2.1' },
+        }),
+      ).toEqual('0x9b6F54C7B64F3c6AC19595d54C6723e2E3357B6c')
+    })
+
+    test('multi-factor ENS address deliberately matches v2 on 1.2.1', () => {
+      // Stateless ENS data moves the old root-data vector from 0x3Da8….
+      expect(
+        getAddress({
+          owners: {
+            type: 'multi-factor',
+            validators: [
+              { type: 'ecdsa', accounts: [accountA] },
+              {
+                type: 'ens',
+                accounts: [accountB],
+                ownerExpirations: [],
+              },
+            ],
+          },
+          account: { type: 'nexus', version: '1.2.1' },
+        }),
+      ).toEqual('0xFcA9c26D01F969cA03b0195BD153f48b177aCFCb')
+    })
+
+    test('ECDSA-only multi-factor address remains unchanged on 1.2.1', () => {
+      expect(
+        getAddress({
+          owners: {
+            type: 'multi-factor',
+            validators: [
+              { type: 'ecdsa', accounts: [accountA] },
+              { type: 'ecdsa', accounts: [accountB] },
+            ],
+          },
+          account: { type: 'nexus', version: '1.2.1' },
+        }),
+      ).toEqual('0x25cfCd65c6CE081Ca5F537C4C33e2e279F66d976')
+    })
+
     test('Existing account (1.2.1 factory)', () => {
       // A persisted 1.2.1 { factory, factoryData } must recompute the same
       // counterfactual address as the direct config, i.e. against the 1.2.1
@@ -230,7 +292,40 @@ describe('Accounts: Nexus', () => {
     })
   })
 
+  describe('Get Default Validator Address', () => {
+    test.each([undefined, '1.2.0', '1.2.1', 'rhinestone-1.0.0'] as const)(
+      'uses the deployment default for %s',
+      (version) => {
+        expect(getDefaultValidatorAddress(version)).toEqual(
+          OWNABLE_VALIDATOR_ADDRESS,
+        )
+      },
+    )
+
+    test('preserves adopted account defaults', () => {
+      expect(getDefaultValidatorAddress('1.0.2')).toEqual(
+        '0x0000002d6db27c52e3c11c1cf24072004ac75cba',
+      )
+      expect(getDefaultValidatorAddress('rhinestone-1.0.0-beta')).toEqual(
+        '0x0000000000e9e6e96bcaa3c113187cdb7e38aed9',
+      )
+    })
+  })
+
   describe('Get Packed Signature', () => {
+    test('elides the 1.2.0 default validator', async () => {
+      const signature = await packSignature(
+        '0x1234',
+        { address: OWNABLE_VALIDATOR_ADDRESS, isRoot: true },
+        undefined,
+        getDefaultValidatorAddress('1.2.0'),
+      )
+
+      expect(signature).toEqual(
+        '0x00000000000000000000000000000000000000001234',
+      )
+    })
+
     test('Mock signature', async () => {
       const mockSignature = '0x1234'
       const validator = {

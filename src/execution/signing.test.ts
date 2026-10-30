@@ -1,10 +1,11 @@
-import { type Hex, zeroAddress } from 'viem'
+import { type Hex, type PublicClient, verifyTypedData, zeroAddress } from 'viem'
 import { base } from 'viem/chains'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { accountA } from '../../test/consts'
 import type {
   IntentOp,
   IntentOpElement,
+  IntentRoute,
   SettlementLayer,
 } from '../orchestrator/types'
 import type {
@@ -13,7 +14,12 @@ import type {
   SessionSignerSet,
   SignerSet,
 } from '../types'
-import { getTargetExecutionSignature, signIntent } from './utils'
+import {
+  getTargetExecutionSignature,
+  getValidatorAccount,
+  signIntent,
+  signPermits,
+} from './utils'
 
 const {
   MOCK_EMISSARY,
@@ -23,7 +29,10 @@ const {
   MOCK_VALIDATOR,
   mockGetEmissarySignature,
   mockGetEip1271Signature,
+  mockGetSmartAccount,
   mockIsSessionEnabled,
+  mockPackEip1271Signature,
+  mockSignQuorumHash,
   MOCK_TYPED_DATA,
 } = vi.hoisted(() => {
   const MOCK_ACCOUNT = '0x1111111111111111111111111111111111111111'
@@ -34,7 +43,12 @@ const {
 
   const mockGetEmissarySignature = vi.fn().mockResolvedValue(MOCK_EMISSARY)
   const mockGetEip1271Signature = vi.fn().mockResolvedValue(MOCK_EIP1271)
+  const mockGetSmartAccount = vi.fn().mockResolvedValue({})
   const mockIsSessionEnabled = vi.fn().mockResolvedValue(true)
+  const mockPackEip1271Signature = vi.fn(
+    async (_config, signature) => signature,
+  )
+  const mockSignQuorumHash = vi.fn().mockResolvedValue('0xab')
 
   const MOCK_TYPED_DATA = {
     domain: {
@@ -58,7 +72,10 @@ const {
     MOCK_VALIDATOR: MOCK_VALIDATOR as `0x${string}`,
     mockGetEmissarySignature,
     mockGetEip1271Signature,
+    mockGetSmartAccount,
     mockIsSessionEnabled,
+    mockPackEip1271Signature,
+    mockSignQuorumHash,
     MOCK_TYPED_DATA,
   }
 })
@@ -71,12 +88,13 @@ vi.mock('../accounts', () => ({
   getAddress: vi.fn().mockReturnValue(MOCK_ACCOUNT),
   getEmissarySignature: mockGetEmissarySignature,
   getEip1271Signature: mockGetEip1271Signature,
-  getSmartAccount: vi.fn(),
+  getSmartAccount: mockGetSmartAccount,
   getEip712Domain: vi.fn(),
-  getAccountProvider: vi.fn(),
+  getAccountProvider: vi.fn().mockReturnValue({ type: 'safe' }),
   getInitCode: vi.fn(),
   getGuardianSmartAccount: vi.fn(),
   getTypedDataPackedSignature: vi.fn(),
+  packEip1271Signature: mockPackEip1271Signature,
   toErc6492Signature: vi.fn(),
   is7702: vi.fn().mockReturnValue(false),
   getEip7702InitCall: vi.fn(),
@@ -87,6 +105,7 @@ vi.mock('../accounts', () => ({
 
 vi.mock('../accounts/signing/common', () => ({
   convertOwnerSetToSignerSet: vi.fn(),
+  signQuorumHash: mockSignQuorumHash,
 }))
 
 vi.mock('../accounts/startale', () => ({
@@ -241,6 +260,30 @@ beforeEach(() => {
   mockGetEmissarySignature.mockResolvedValue(MOCK_EMISSARY)
   mockGetEip1271Signature.mockResolvedValue(MOCK_EIP1271)
   mockIsSessionEnabled.mockResolvedValue(true)
+  mockPackEip1271Signature.mockImplementation(
+    async (_config, signature) => signature,
+  )
+  mockSignQuorumHash.mockResolvedValue('0xab')
+})
+
+describe('getValidatorAccount', () => {
+  test('threads selected quorum owners into UserOperation signing', async () => {
+    const quorumSigners: SignerSet = {
+      type: 'owner',
+      kind: 'quorum',
+      accounts: [accountA],
+    }
+    const publicClient = {} as PublicClient
+
+    await getValidatorAccount(config, quorumSigners, publicClient, base)
+
+    expect(mockGetSmartAccount).toHaveBeenCalledWith(
+      config,
+      publicClient,
+      base,
+      quorumSigners,
+    )
+  })
 })
 
 describe('getTargetExecutionSignature', () => {
@@ -375,6 +418,41 @@ describe('signIntent with owner signers', () => {
     expect(mockGetEip1271Signature).toHaveBeenCalled()
     expect(mockGetEmissarySignature).not.toHaveBeenCalled()
     expect(originSignatures).toHaveLength(1)
+  })
+})
+
+describe('signIntent with quorum owners', () => {
+  test('signs one Merkle root and emits a proof envelope per origin', async () => {
+    const quorumConfig: RhinestoneConfig = {
+      ...config,
+      owners: {
+        type: 'quorum',
+        module: MOCK_VALIDATOR,
+        owners: [{ account: accountA, weight: 1n }],
+        thresholdWeight: 1n,
+      },
+    }
+    const quorumSigners: SignerSet = {
+      type: 'owner',
+      kind: 'quorum',
+      accounts: [accountA],
+    }
+
+    const { originSignatures, destinationSignature } = await signIntent(
+      quorumConfig,
+      makeIntentOp(['INTENT_EXECUTOR', 'INTENT_EXECUTOR']),
+      base,
+      quorumSigners,
+    )
+
+    expect(mockSignQuorumHash).toHaveBeenCalledTimes(1)
+    expect(originSignatures).toHaveLength(2)
+    expect(
+      originSignatures.every((signature) => signature.endsWith('ab')),
+    ).toBe(true)
+    expect(mockPackEip1271Signature).toHaveBeenCalledTimes(2)
+    expect(destinationSignature).toBe(originSignatures[1])
+    expect(mockGetEip1271Signature).not.toHaveBeenCalled()
   })
 })
 
@@ -625,5 +703,91 @@ describe('signIntent with permit2 claim policy', () => {
       claimPolicyData?: Hex
     }
     expect(sessionSignersArg.claimPolicyData).toBeUndefined()
+  })
+})
+
+describe('signPermits', () => {
+  const USDC = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913'
+  const WETH = '0x4200000000000000000000000000000000000006'
+  const PERMIT2 = '0x000000000022D473030F116dDEE9F6B43aC78BA3'
+  // As it arrives on the wire: uints as strings, EIP712Domain included.
+  const permit = {
+    domain: {
+      name: 'USD Coin',
+      version: '2',
+      chainId: 8453,
+      verifyingContract: USDC,
+    },
+    types: {
+      EIP712Domain: [
+        { name: 'name', type: 'string' },
+        { name: 'version', type: 'string' },
+        { name: 'chainId', type: 'uint256' },
+        { name: 'verifyingContract', type: 'address' },
+      ],
+      Permit: [
+        { name: 'owner', type: 'address' },
+        { name: 'spender', type: 'address' },
+        { name: 'value', type: 'uint256' },
+        { name: 'nonce', type: 'uint256' },
+        { name: 'deadline', type: 'uint256' },
+      ],
+    },
+    primaryType: 'Permit',
+    message: {
+      owner: accountA.address,
+      spender: PERMIT2,
+      value: (2n ** 256n - 1n).toString(),
+      nonce: '0',
+      deadline: '1800000000',
+    },
+  }
+  const route = {
+    tokenRequirements: {
+      8453: {
+        [USDC]: { type: 'approval', amount: 1n, spender: PERMIT2, permit },
+        [WETH]: { type: 'approval', amount: 1n, spender: PERMIT2 },
+      },
+    },
+  } as unknown as IntentRoute
+  const eoaConfig = {
+    account: { type: 'eoa' },
+    eoa: accountA,
+  } as unknown as RhinestoneConfig
+
+  test('signs each offered permit with the EOA, keyed by chain and token', async () => {
+    const signatures = await signPermits(eoaConfig, route)
+
+    expect(Object.keys(signatures?.[8453] ?? {})).toEqual([USDC])
+    const { EIP712Domain: _, ...types } = permit.types
+    expect(
+      await verifyTypedData({
+        address: accountA.address,
+        domain: permit.domain,
+        types,
+        primaryType: 'Permit',
+        message: {
+          ...permit.message,
+          value: BigInt(permit.message.value),
+          nonce: 0n,
+          deadline: 1800000000n,
+        },
+        signature: signatures?.[8453]?.[USDC] as Hex,
+      }),
+    ).toBe(true)
+  })
+
+  test('returns undefined when no permit is offered', async () => {
+    expect(
+      await signPermits(eoaConfig, { tokenRequirements: {} } as IntentRoute),
+    ).toBeUndefined()
+  })
+
+  test('signs nothing for a smart account', async () => {
+    const smartAccountConfig = {
+      owners: { type: 'ecdsa', accounts: [accountA], threshold: 1 },
+      eoa: accountA,
+    } as unknown as RhinestoneConfig
+    expect(await signPermits(smartAccountConfig, route)).toBeUndefined()
   })
 })

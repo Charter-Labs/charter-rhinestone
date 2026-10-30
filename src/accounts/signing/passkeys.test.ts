@@ -1,9 +1,16 @@
-import type { Hex } from 'viem'
+import {
+  decodeAbiParameters,
+  encodeAbiParameters,
+  type Hex,
+  zeroAddress,
+} from 'viem'
 import { describe, expect, test } from 'vitest'
+import { withoutHostCollation } from '../../../test/utils/locale'
 import {
   generateCredentialId,
   packSignature,
   packSignatureV0,
+  packStatelessSignature,
   parsePublicKey,
   parseSignature,
   type WebAuthnSignature,
@@ -106,6 +113,155 @@ describe('Passkeys', () => {
       const packed = packSignature(credIds, usePrecompile, webAuthns)
       expect(packed).toEqual(
         '0x0000000000000000000000000000000000000000000000000000000000000060000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000c000000000000000000000000000000000000000000000000000000000000000026be9646e4d64132d1a1789a467d0501e948d23afce6792d963f401434d7bef339437809df26444a849d303b1174543f0851df5fae657da19f3bb0d92356426ea00000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000040000000000000000000000000000000000000000000000000000000000000022000000000000000000000000000000000000000000000000000000000000000c00000000000000000000000000000000000000000000000000000000000000120000000000000000000000000000000000000000000000000000000000000001700000000000000000000000000000000000000000000000000000000000000017474c214167b8a4704cf06f75287a738e7ddbcca9cc0383db6dac6a7d090f4ee024ff8e2a2e8c54aa8cf5f36e3b6125016c3d58d896e3a85c5cd2cd0027a2625000000000000000000000000000000000000000000000000000000000000002549960de5880e8c687434170f6476605b8fe4aeb9a28632c7995cf3ba831d97631d0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000867b2274797065223a22776562617574686e2e676574222c226368616c6c656e6765223a22313971416351415643657563467438745153697a424264627857364a6b65785f336e41656a64527556656b222c226f726967696e223a22687474703a2f2f6c6f63616c686f73743a35313733222c2263726f73734f726967696e223a66616c73657d000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000c0000000000000000000000000000000000000000000000000000000000000012000000000000000000000000000000000000000000000000000000000000000170000000000000000000000000000000000000000000000000000000000000001f60f80fe3fd029d1b380d631f0b659bfbc8f8f60921a88e1e123c159aa540f920ed337464d1bb813dc5f9c3e81998185370da49cc525e9f42cdf805f1030aff8000000000000000000000000000000000000000000000000000000000000002549960de5880e8c687434170f6476605b8fe4aeb9a28632c7995cf3ba831d97631d0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000867b2274797065223a22776562617574686e2e676574222c226368616c6c656e6765223a2234703254695a70546f6f4c43464659544332486d4d50564d69566a5a476768434a30647a377a5544456541222c226f726967696e223a22687474703a2f2f6c6f63616c686f73743a35313733222c2263726f73734f726967696e223a66616c73657d0000000000000000000000000000000000000000000000000000',
+      )
+    })
+
+    test('orders credential IDs by value, not by host collation', () => {
+      // 0xb1… collates before 0xaa… on Danish-family locales, but the validator
+      // requires ascending credential IDs.
+      const high = `0xb1${'11'.repeat(31)}` as Hex
+      const low = `0xaa${'22'.repeat(31)}` as Hex
+      const webAuthn: WebAuthnSignature = {
+        authenticatorData: '0x1234',
+        clientDataJSON: '{"type":"webauthn.get","challenge":"value"}',
+        challengeIndex: 23n,
+        typeIndex: 1n,
+        r: 1n,
+        s: 2n,
+      }
+
+      const [credIds] = decodeAbiParameters(
+        [
+          { type: 'bytes32[]' },
+          { type: 'bool' },
+          {
+            type: 'tuple[]',
+            components: [
+              { type: 'bytes' },
+              { type: 'string' },
+              { type: 'uint256' },
+              { type: 'uint256' },
+              { type: 'uint256' },
+              { type: 'uint256' },
+            ],
+          },
+        ],
+        withoutHostCollation(() =>
+          packSignature([high, low], false, [webAuthn, webAuthn]),
+        ),
+      )
+      expect(credIds).toEqual([low, high])
+    })
+  })
+
+  describe('Pack Stateless Signature', () => {
+    const accounts = [
+      { publicKey: `0x${'01'.repeat(32)}${'02'.repeat(32)}` as Hex },
+      { publicKey: `0x${'03'.repeat(32)}${'04'.repeat(32)}` as Hex },
+      { publicKey: `0x${'05'.repeat(32)}${'06'.repeat(32)}` as Hex },
+    ]
+    const webAuthns: WebAuthnSignature[] = [
+      {
+        authenticatorData: '0x01',
+        clientDataJSON: 'first',
+        challengeIndex: 1n,
+        typeIndex: 1n,
+        r: 1n,
+        s: 1n,
+      },
+      {
+        authenticatorData: '0x02',
+        clientDataJSON: 'second',
+        challengeIndex: 2n,
+        typeIndex: 2n,
+        r: 2n,
+        s: 2n,
+      },
+      {
+        authenticatorData: '0x03',
+        clientDataJSON: 'third',
+        challengeIndex: 3n,
+        typeIndex: 3n,
+        r: 3n,
+        s: 3n,
+      },
+    ]
+    const credentialId = ({ publicKey }: { publicKey: Hex }) => {
+      const { x, y } = parsePublicKey(publicKey)
+      return generateCredentialId(x, y, zeroAddress)
+    }
+    const canonicalAccounts = [...accounts].sort((a, b) =>
+      credentialId(a) < credentialId(b) ? -1 : 1,
+    )
+    const signatureFor = (account: (typeof accounts)[number]) =>
+      webAuthns[accounts.indexOf(account)]
+    const tupleAbi = [
+      {
+        type: 'tuple[]',
+        components: [
+          { type: 'bytes', name: 'authenticatorData' },
+          { type: 'string', name: 'clientDataJSON' },
+          { type: 'uint256', name: 'challengeIndex' },
+          { type: 'uint256', name: 'typeIndex' },
+          { type: 'uint256', name: 'r' },
+          { type: 'uint256', name: 's' },
+        ],
+      },
+    ] as const
+
+    test('uses an assertion-only ABI', () => {
+      const packed = packStatelessSignature(accounts, accounts, webAuthns)
+      expect(packed).toEqual(
+        encodeAbiParameters(tupleAbi, [canonicalAccounts.map(signatureFor)]),
+      )
+    })
+
+    test('orders credentials by their zero-address IDs', () => {
+      const packed = packStatelessSignature(accounts, accounts, webAuthns)
+      const [packedWebAuthns] = decodeAbiParameters(tupleAbi, packed)
+      expect(packedWebAuthns.map(({ r }) => r)).toEqual(
+        canonicalAccounts.map(signatureFor).map(({ r }) => r),
+      )
+    })
+
+    test('accepts lowest-prefix signer subsets', () => {
+      const signers = canonicalAccounts.slice(0, 2)
+      expect(() =>
+        packStatelessSignature(
+          signers,
+          [...accounts].reverse(),
+          signers.map(signatureFor),
+        ),
+      ).not.toThrow()
+    })
+
+    test('rejects non-prefix and gapped signer subsets', () => {
+      expect(() =>
+        packStatelessSignature([canonicalAccounts[1]], accounts, [
+          signatureFor(canonicalAccounts[1]),
+        ]),
+      ).toThrow('partial signer set must be the lowest-ordered credentials')
+      expect(() =>
+        packStatelessSignature(
+          [canonicalAccounts[0], canonicalAccounts[2]],
+          accounts,
+          [
+            signatureFor(canonicalAccounts[0]),
+            signatureFor(canonicalAccounts[2]),
+          ],
+        ),
+      ).toThrow('partial signer set must be the lowest-ordered credentials')
+    })
+
+    test('is independent of caller order', () => {
+      const signers = canonicalAccounts.slice(0, 2)
+      const packed = packStatelessSignature(
+        [...signers].reverse(),
+        [...accounts].reverse(),
+        [...signers].reverse().map(signatureFor),
+      )
+      expect(packed).toEqual(
+        packStatelessSignature(signers, accounts, signers.map(signatureFor)),
       )
     })
   })

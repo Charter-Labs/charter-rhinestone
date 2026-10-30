@@ -76,6 +76,7 @@ import {
   signEnableSession as signEnableSessionInternal,
   WEBAUTHN_VALIDATOR_ADDRESS,
 } from './modules'
+import { getQuorumValidator } from './modules/validators/quorum'
 import {
   isSessionEnabled as isSessionEnabledInternal,
   type SessionDetails,
@@ -93,11 +94,14 @@ import {
   type IntentInput,
   type IntentOp,
   type IntentOpStatus,
+  type IntentRefund,
   type Portfolio,
   type SettlementLayer,
   type SignedIntentOp,
   type SplitIntentsInput,
   type SplitIntentsResult,
+  type SwapQuoter,
+  type SwapQuoterFilter,
   type TokenRequirements,
   type WrapRequired,
 } from './orchestrator'
@@ -115,12 +119,15 @@ import type {
   Permit2ClaimPolicy,
   Policy,
   ProviderConfig,
+  QuorumOwner,
+  QuorumValidatorConfig,
   Recovery,
   RhinestoneAccountConfig,
   RhinestoneConfig,
   RhinestoneSDKConfig,
   Session,
   SignerSet,
+  SwapScope,
   TokenRequest,
   TokenSymbol,
   Transaction,
@@ -231,6 +238,9 @@ async function createRhinestoneAccount(
   // Validate that owners field is provided for non-EOA accounts
   if (config.account?.type !== 'eoa' && !config.owners) {
     throw new OwnersFieldRequiredError()
+  }
+  if (config.owners?.type === 'quorum') {
+    getQuorumValidator(config.owners)
   }
 
   /**
@@ -490,6 +500,9 @@ async function createRhinestoneAccount(
    * @returns Account owners
    */
   function getOwners(chain: Chain) {
+    if (config.owners?.type === 'quorum') {
+      throw new Error('getOwners is not supported for Quorum validators')
+    }
     const accountType = getAccountProvider(config).type
     const account = getAddress()
     // For HCA, the module lives behind the factory (custom factories define
@@ -683,6 +696,7 @@ export type {
   IntentInput,
   IntentOp,
   IntentOpStatus,
+  IntentRefund,
   IntentRoute,
   // Multi-chain permit2 types
   MultiChainPermit2Config,
@@ -697,6 +711,8 @@ export type {
   PreparedTransactionData,
   PreparedUserOperationData,
   ProviderConfig,
+  QuorumOwner,
+  QuorumValidatorConfig,
   Recovery,
   RhinestoneAccount,
   RhinestoneAccountConfig,
@@ -708,6 +724,9 @@ export type {
   SignerSet,
   SplitIntentsInput,
   SplitIntentsResult,
+  SwapQuoter,
+  SwapQuoterFilter,
+  SwapScope,
   TokenRequest,
   TokenRequirements,
   TokenSymbol,

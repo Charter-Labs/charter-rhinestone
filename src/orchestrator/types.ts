@@ -6,7 +6,7 @@ import type {
   SupportedOPStackTestnet,
   SupportedTestnet,
 } from '@rhinestone/shared-configs'
-import type { Address, Chain, Hex } from 'viem'
+import type { Address, Chain, Hex, TypedDataDefinition } from 'viem'
 
 type SupportedTokenSymbol = 'ETH' | 'WETH' | 'USDC' | 'USDT' | 'USDT0'
 type SupportedToken = SupportedTokenSymbol | Address
@@ -96,12 +96,30 @@ type AuxiliaryFunds = {
   [chainId: number]: Record<Address, bigint>
 }
 
+type SwapQuoter =
+  | '1inch'
+  | '0x'
+  | 'velora'
+  | 'kyberswap'
+  | 'fynd'
+  | 'fynd-hosted'
+  | 'bebop'
+  | 'relay'
+
+type SwapQuoterFilter = { include: SwapQuoter[] } | { exclude: SwapQuoter[] }
+
 interface IntentOptions {
   topupCompact: boolean
   feeToken?: Address | SupportedTokenSymbol
   appFees?: AppFeeRate
+  protocolFees?: ProtocolFeeRate
   sponsorSettings?: SponsorSettings
   settlementLayers?: SettlementLayer[]
+  /**
+   * Restrict swap routing to specific quoters. An empty include list means no
+   * quoter is allowed and intentionally fails the request closed.
+   */
+  quoters?: SwapQuoterFilter
   signatureMode?: SignatureMode
   auxiliaryFunds?: AuxiliaryFunds
   /**
@@ -113,6 +131,15 @@ interface IntentOptions {
 }
 
 interface AppFeeRate {
+  feeBps: number
+}
+
+/**
+ * Rate for the Rhinestone protocol fee (RHI-4904) — a clone of the app fee
+ * that always accrues to Rhinestone regardless of the caller's API key, and
+ * (unlike the app fee) can be sponsored via `sponsorSettings.protocolFees`.
+ */
+interface ProtocolFeeRate {
   feeBps: number
 }
 
@@ -135,6 +162,7 @@ interface SponsorSettings {
   gasSponsored: boolean
   bridgeFeesSponsored: boolean
   swapFeesSponsored: boolean
+  protocolFeesSponsored?: boolean
 }
 
 interface PortfolioToken {
@@ -408,6 +436,8 @@ interface ApprovalRequired {
   type: 'approval'
   amount: bigint
   spender: Address
+  /** ERC-2612 permit for `spender`; an EOA signs it instead of sending the approve. Present only where the token supports it. */
+  permit?: TypedDataDefinition
 }
 
 type TokenRequirements = {
@@ -443,6 +473,7 @@ type SignedIntentOp = IntentOp & {
     r: Hex
     s: Hex
   }[]
+  permitSignatures?: Record<number, Record<Address, Hex>>
 }
 
 interface TokenConfig {
@@ -482,6 +513,28 @@ interface SplitIntentsResult {
   intents: Record<Address, bigint>[]
 }
 
+/**
+ * A settlement layer returned the intent's funds to the account instead of
+ * delivering them.
+ *
+ * Not a claim: Rhinestone neither built nor broadcast this transaction, and a
+ * refund never makes the intent succeed — a refunded intent stays `FAILED`,
+ * because it did not do what was asked.
+ *
+ * `chain` rather than the `chainId` its neighbours here use, because the field
+ * is served verbatim on both orchestrator API versions and a second spelling
+ * would be a second shape to keep in step.
+ */
+interface IntentRefund {
+  /** Chain the refund landed on. */
+  chain: number
+  /**
+   * The refund transaction, in the chain's native form (EVM hex, Solana
+   * base58, Tron hex). Interpret it against `chain`.
+   */
+  txHash: string
+}
+
 interface IntentOpStatus {
   status: IntentStatus
   claims: Claim[]
@@ -489,6 +542,18 @@ interface IntentOpStatus {
   userAddress: Address
   fillTimestamp?: number
   fillTransactionHash?: Hex
+  /**
+   * Bridge refunds observed for this intent.
+   *
+   * Undefined means no refund is KNOWN — never that the funds were kept. A
+   * refund is recorded only where a settlement layer evidences it with a
+   * transaction, so presence is a fact and absence is not a claim.
+   *
+   * Typed only: `getIntentOpStatus` returns the response body as-is, so the
+   * value has always arrived once the orchestrator sends it. This is what
+   * lets a caller read it without a cast.
+   */
+  refunds?: IntentRefund[]
 }
 
 interface PortfolioTokenChainResponse {
@@ -519,6 +584,7 @@ export type {
   AppFee,
   AppFeeBalances,
   AppFeeRate,
+  ProtocolFeeRate,
   ApprovalRequired,
   AuxiliaryFunds,
   Execution,
@@ -531,6 +597,7 @@ export type {
   IntentOpElement,
   IntentOpElementMandate,
   IntentOpStatus,
+  IntentRefund,
   IntentResult,
   IntentRoute,
   MappedChainTokenAccessList,
@@ -544,6 +611,8 @@ export type {
   SignedIntentOp,
   SplitIntentsInput,
   SplitIntentsResult,
+  SwapQuoter,
+  SwapQuoterFilter,
   SupportedChain,
   TokenConfig,
   TokenRequirements,

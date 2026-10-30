@@ -1,14 +1,36 @@
-import { decodeAbiParameters, isAddress, size } from 'viem'
+import type { Account, Address, Hex } from 'viem'
+import {
+  decodeAbiParameters,
+  encodeAbiParameters,
+  isAddress,
+  keccak256,
+  maxUint48,
+  size,
+  zeroAddress,
+} from 'viem'
+import { toWebAuthnAccount } from 'viem/account-abstraction'
 import { describe, expect, test } from 'vitest'
 import {
   accountA,
   accountB,
   accountC,
+  casingAccountHigh,
+  casingAccountLow,
+  collationAccountHigh,
+  collationAccountLow,
   passkeyAccount,
 } from '../../../test/consts'
+import { withoutHostCollation } from '../../../test/utils/locale'
 import { AccountConfigurationNotSupportedError } from '../../accounts/error'
 import { MODULE_TYPE_ID_VALIDATOR } from '../common'
-import { getMockSignature, getOwnerValidator, getValidator } from './core'
+import {
+  getENSValidator,
+  getMockSignature,
+  getOwnerValidator,
+  getSocialRecoveryValidator,
+  getValidator,
+} from './core'
+import { compareHexValues } from './ordering'
 
 describe('Validators Core', () => {
   describe('Validator', () => {
@@ -114,6 +136,191 @@ describe('Validators Core', () => {
     })
   })
 
+  describe('Multi-factor stateless factors', () => {
+    const webAuthnAuthAbi = {
+      type: 'tuple[]',
+      name: 'webAuthns',
+      components: [
+        { type: 'bytes', name: 'authenticatorData' },
+        { type: 'string', name: 'clientDataJSON' },
+        { type: 'uint256', name: 'challengeIndex' },
+        { type: 'uint256', name: 'typeIndex' },
+        { type: 'uint256', name: 'r' },
+        { type: 'uint256', name: 's' },
+      ],
+    } as const
+    const multiFactorAbi = [
+      {
+        components: [
+          { type: 'bytes32', name: 'packedValidatorAndId' },
+          { type: 'bytes', name: 'data' },
+        ],
+        name: 'validators',
+        type: 'tuple[]',
+      },
+    ] as const
+
+    const passkeyAccountB = toWebAuthnAccount({
+      credential: {
+        id: 'second-passkey',
+        publicKey: `0x04${'11'.repeat(32)}${'22'.repeat(32)}` as Hex,
+      },
+    })
+
+    test('encodes ECDSA, passkey, and ENS factors as stateless data', () => {
+      const validator = getValidator({
+        type: 'multi-factor',
+        validators: [
+          { type: 'ecdsa', accounts: [accountB, accountA] },
+          { type: 'passkey', accounts: [passkeyAccountB, passkeyAccount] },
+          {
+            type: 'ens',
+            accounts: [accountB, accountA],
+            ownerExpirations: [1, 2],
+          },
+        ],
+      })
+      const [factors] = decodeAbiParameters(
+        multiFactorAbi,
+        `0x${validator.initData.slice(4)}` as Hex,
+      )
+
+      expect(validator.address).toEqual(
+        '0xf6bdf42c9be18ceca5c06c42a43daf7fbbe7896b',
+      )
+      expect(
+        factors.map((factor) => `0x${factor.packedValidatorAndId.slice(-40)}`),
+      ).toEqual([
+        '0x000000000013fdb5234e4e3162a810f54d9f7e98',
+        '0x0000000000578c4cb0e472a5462da43c495c3f33',
+        '0x5049ecbd4d961ae6dfeed9b7ccce7f026454970e',
+      ])
+
+      const [ecdsaThreshold, ecdsaOwners] = decodeAbiParameters(
+        [
+          { type: 'uint256', name: 'threshold' },
+          { type: 'address[]', name: 'owners' },
+        ],
+        factors[0].data,
+      )
+      expect(ecdsaThreshold).toEqual(1n)
+      expect(ecdsaOwners.map((owner) => owner.toLowerCase())).toEqual(
+        [accountB.address.toLowerCase(), accountA.address.toLowerCase()].sort(),
+      )
+      expect(factors[0].data).toEqual(
+        getValidator({
+          type: 'ecdsa',
+          accounts: [accountB, accountA],
+        }).initData,
+      )
+
+      const [passkeyContext, passkeyAccountAddress] = decodeAbiParameters(
+        [
+          {
+            name: 'context',
+            type: 'tuple',
+            components: [
+              { name: 'usePrecompile', type: 'bool' },
+              { name: 'threshold', type: 'uint256' },
+              { name: 'credentialIds', type: 'bytes32[]' },
+              {
+                name: 'credentialData',
+                type: 'tuple[]',
+                components: [
+                  { name: 'pubKeyX', type: 'uint256' },
+                  { name: 'pubKeyY', type: 'uint256' },
+                  { name: 'requireUV', type: 'bool' },
+                ],
+              },
+            ],
+          },
+          { name: 'account', type: 'address' },
+        ],
+        factors[1].data,
+      )
+      const expectedCredentials = [passkeyAccount, passkeyAccountB]
+        .map((account) => {
+          const publicKey = account.publicKey.slice(
+            account.publicKey.length === 132 ? 4 : 2,
+          )
+          const pubKeyX = BigInt(`0x${publicKey.slice(0, 64)}`)
+          const pubKeyY = BigInt(`0x${publicKey.slice(64)}`)
+          return {
+            credentialId: keccak256(
+              encodeAbiParameters(
+                [{ type: 'uint256' }, { type: 'uint256' }, { type: 'address' }],
+                [pubKeyX, pubKeyY, zeroAddress],
+              ),
+            ),
+            pubKeyX,
+          }
+        })
+        .sort((a, b) => compareHexValues(a.credentialId, b.credentialId))
+      expect(passkeyAccountAddress).toEqual(zeroAddress)
+      expect(passkeyContext.usePrecompile).toEqual(false)
+      expect(passkeyContext.threshold).toEqual(1n)
+      expect(passkeyContext.credentialIds).toEqual(
+        expectedCredentials.map(({ credentialId }) => credentialId),
+      )
+      expect(
+        passkeyContext.credentialData.map((credential) => credential.pubKeyX),
+      ).toEqual(expectedCredentials.map(({ pubKeyX }) => pubKeyX))
+
+      const [ensThreshold, ensOwners] = decodeAbiParameters(
+        [
+          { type: 'uint256', name: 'threshold' },
+          { type: 'address[]', name: 'owners' },
+        ],
+        factors[2].data,
+      )
+      expect(ensThreshold).toEqual(1n)
+      expect(ensOwners.map((owner) => owner.toLowerCase())).toEqual(
+        [accountA.address.toLowerCase(), accountB.address.toLowerCase()].sort(),
+      )
+      expect(factors[1].data).not.toEqual(
+        getValidator({
+          type: 'passkey',
+          accounts: [passkeyAccountB, passkeyAccount],
+        }).initData,
+      )
+      expect(factors[2].data).not.toEqual(
+        getValidator({
+          type: 'ens',
+          accounts: [accountB, accountA],
+          ownerExpirations: [1, 2],
+        }).initData,
+      )
+    })
+
+    test('uses assertion-only passkey mocks only for nested factors', () => {
+      const directSignature = getMockSignature({
+        type: 'passkey',
+        accounts: [passkeyAccount],
+      })
+      const [credentialIds, usePrecompile, assertions] = decodeAbiParameters(
+        [
+          { type: 'bytes32[]', name: 'credIds' },
+          { type: 'bool', name: 'usePrecompile' },
+          webAuthnAuthAbi,
+        ],
+        directSignature,
+      )
+      const nestedSignature = getMockSignature({
+        type: 'multi-factor',
+        validators: [{ type: 'passkey', accounts: [passkeyAccount] }],
+      })
+      const [factors] = decodeAbiParameters(multiFactorAbi, nestedSignature)
+
+      expect(credentialIds).toHaveLength(1)
+      expect(usePrecompile).toEqual(false)
+      expect(assertions).toHaveLength(1)
+      expect(factors[0].data).toEqual(
+        encodeAbiParameters([webAuthnAuthAbi], [assertions]),
+      )
+      expect(factors[0].data).not.toEqual(directSignature)
+    })
+  })
+
   describe('Mock Signature', () => {
     test('ECDSA: single address', () => {
       const signature = getMockSignature({
@@ -184,24 +391,27 @@ describe('Validators Core', () => {
       ).toThrow(AccountConfigurationNotSupportedError)
     })
 
-    test('ENS sub-validator in multi-factor requires an HCA account', () => {
-      expect(() =>
-        getOwnerValidator({
-          account: { type: 'nexus' },
-          owners: {
-            type: 'multi-factor',
-            validators: [
-              { type: 'ecdsa', accounts: [accountB] },
-              {
-                type: 'ens',
-                accounts: [accountA],
-                ownerExpirations: [281474976710655],
-              },
-            ],
-          },
-        }),
-      ).toThrow(AccountConfigurationNotSupportedError)
-    })
+    test.each(['safe', 'nexus', 'kernel', 'startale'] as const)(
+      'ENS sub-validator in multi-factor is supported on %s accounts',
+      (type) => {
+        expect(() =>
+          getOwnerValidator({
+            account: { type },
+            owners: {
+              type: 'multi-factor',
+              validators: [
+                { type: 'ecdsa', accounts: [accountB] },
+                {
+                  type: 'ens',
+                  accounts: [accountA],
+                  ownerExpirations: [281474976710655],
+                },
+              ],
+            },
+          }),
+        ).not.toThrow()
+      },
+    )
 
     test('ENS owners are allowed on HCA accounts', () => {
       const validator = getOwnerValidator({
@@ -215,6 +425,75 @@ describe('Validators Core', () => {
       expect(validator.address).toEqual(
         '0x5049ecBd4d961aE6DFEED9b7ccCe7f026454970E',
       )
+    })
+  })
+
+  describe('Ordering', () => {
+    test('ENS owners are ordered by address value', () => {
+      const ownerAddresses = (owners: Account[]) => {
+        const initData = withoutHostCollation(
+          () =>
+            getENSValidator(
+              1,
+              owners.map((owner) => owner.address),
+              [Number(maxUint48), Number(maxUint48)],
+            ).initData,
+        )
+        const [, decoded] = decodeAbiParameters(
+          [
+            { name: 'threshold', type: 'uint256' },
+            {
+              name: 'owners',
+              type: 'tuple[]',
+              components: [
+                { name: 'addr', type: 'address' },
+                { name: 'expiration', type: 'uint48' },
+              ],
+            },
+          ],
+          initData,
+        )
+        return decoded.map((owner) => owner.addr.toLowerCase())
+      }
+
+      const expected = [
+        collationAccountLow.address.toLowerCase(),
+        collationAccountHigh.address.toLowerCase(),
+      ]
+      expect(
+        ownerAddresses([collationAccountLow, collationAccountHigh]),
+      ).toEqual(expected)
+      expect(
+        ownerAddresses([collationAccountHigh, collationAccountLow]),
+      ).toEqual(expected)
+    })
+
+    test('recovery guardians are ordered by address value, not by casing', () => {
+      const guardianAddresses = (guardians: Account[]) => {
+        const [, decoded] = decodeAbiParameters(
+          [
+            { name: 'threshold', type: 'uint256' },
+            { name: 'guardians', type: 'address[]' },
+          ],
+          getSocialRecoveryValidator(guardians).initData,
+        )
+        return decoded as readonly Address[]
+      }
+
+      const expected = [
+        casingAccountLow.address.toLowerCase(),
+        casingAccountHigh.address.toLowerCase(),
+      ]
+      expect(
+        guardianAddresses([casingAccountHigh, casingAccountLow]).map(
+          (address) => address.toLowerCase(),
+        ),
+      ).toEqual(expected)
+      expect(
+        guardianAddresses([casingAccountLow, casingAccountHigh]).map(
+          (address) => address.toLowerCase(),
+        ),
+      ).toEqual(expected)
     })
   })
 })
